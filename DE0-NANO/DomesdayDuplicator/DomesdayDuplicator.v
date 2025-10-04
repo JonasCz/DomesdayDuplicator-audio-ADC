@@ -28,7 +28,13 @@ module DomesdayDuplicator(
 	input        CLOCK_50,
 	inout [33:0] GPIO0,
 	inout [33:0] GPIO1,
-	output [7:0] LED
+	output [7:0] LED,
+	
+	// ADC128S022 Audio ADC pins (directly connected on DE0-Nano)
+	output       ADC_CS_N,
+	output       ADC_SCLK,
+	output       ADC_SADDR,
+	input        ADC_SDAT
 );
 
 // FX3 Hardware mapping begins ------------------------------------------------
@@ -221,6 +227,28 @@ assign GPIO0[33] = adc_clock;
 // ADC Hardware mapping ends --------------------------------------------------
 
 
+// Audio ADC (ADC128S022) Hardware mapping begins ----------------------------
+
+// SPI signals for onboard ADC128S022 audio ADC
+// These are connected to dedicated pins on the FPGA (not GPIO headers)
+// Per DE0-Nano ADC documentation:
+// Pin A10: ADC_CS_N   (Chip select - output)
+// Pin B14: ADC_SCLK   (Serial clock - output)
+// Pin B10: ADC_SADDR  (DIN - Data TO ADC, channel select - output)
+// Pin A9:  ADC_SDAT   (DOUT - Data FROM ADC, conversion result - input)
+
+wire adc128_cs_n;
+wire adc128_sclk;
+wire adc128_din;
+
+assign ADC_CS_N = adc128_cs_n;
+assign ADC_SCLK = adc128_sclk;
+assign ADC_SADDR = adc128_din;     // DIN: channel select TO ADC
+// ADC_SDAT is DOUT: conversion result FROM ADC (input)
+
+// Audio ADC (ADC128S022) Hardware mapping ends ------------------------------
+
+
 // Application logic begins ---------------------------------------------------
 
 
@@ -239,6 +267,29 @@ IPpllGenerator IPpllGenerator0 (
 wire fx3_isReading;
 wire [15:0] dataGeneratorOut;
 
+// Audio signals from SPI controller
+wire [11:0] audio_left;
+wire [11:0] audio_right;
+wire audio_ready;
+
+// Audio SPI controller for ADC128S022
+adc128spiController audioController0 (
+	// Inputs
+	.clk_40MHz(adc_clock),          // 40 MHz clock
+	.nReset(fx3_nReset),            // Not reset
+	.spi_dout(ADC_SDAT),            // Data from ADC (DOUT)
+	
+	// SPI outputs
+	.spi_cs_n(adc128_cs_n),         // Chip select
+	.spi_sclk(adc128_sclk),         // Serial clock (2.5 MHz)
+	.spi_din(adc128_din),           // Data to ADC (DIN - channel select)
+	
+	// Audio outputs
+	.audio_left(audio_left),        // 12-bit left channel
+	.audio_right(audio_right),      // 12-bit right channel
+	.audio_ready(audio_ready)       // Pulse every 512 RF clocks
+);
+
 // Generate 16-bit data either from the ADC or the test data generator
 dataGenerator dataGenerator0 (
 	// Inputs
@@ -246,6 +297,11 @@ dataGenerator dataGenerator0 (
 	.clock(adc_clock),				// ADC clock
 	.adc_databus(adc_databus),		// 10-bit ADC databus
 	.testModeFlag(fx3_testMode),	// 1 = Test mode on
+	
+	// Audio inputs
+	.audio_left_in(audio_left),     // 12-bit left audio
+	.audio_right_in(audio_right),   // 12-bit right audio
+	.audio_ready(audio_ready),      // Audio sample ready
 	
 	// Outputs
 	.dataOut(dataGeneratorOut)		// 16-bit data out

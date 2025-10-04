@@ -30,6 +30,11 @@ module dataGenerator (
 	input [9:0] adc_databus,
 	input testModeFlag,
 	
+	// Audio inputs from SPI controller
+	input [11:0] audio_left_in,
+	input [11:0] audio_right_in,
+	input audio_ready,
+	
 	// Outputs
 	output [15:0] dataOut
 );
@@ -43,26 +48,43 @@ reg [9:0] testData;
 // Register to store the sequence number counter
 reg [21:0] sequenceCount;
 
-// The top 6 bits of the output are the sequence number
-assign dataOut[15:10] = sequenceCount[21:16];
+// Frame position counter (0-511)
+reg [8:0] sample_in_frame;
 
-// If we are in test-mode use test data,
-// otherwise use the actual ADC data
+// Latched audio data
+reg [11:0] audio_left_latch;
+reg [11:0] audio_right_latch;
+
+// Top 6 bits: depends on position in frame
+reg [5:0] top_6_bits;
+
+// Sync pattern: 0xDEADBEEFCAFE
+localparam [47:0] SYNC_PATTERN = 48'hDEADBEEFCAFE;
+
+// Output assignments
+assign dataOut[15:10] = top_6_bits;
 assign dataOut[9:0] = testModeFlag ? testData : adcData;
 
 // Read the ADC data and increment the counters on the
-// negative edge of the clock
+// positive edge of the clock
 //
 // Note: The test data is a repeating pattern of incrementing
 // values from 0 to 1020.
 //
 // The sequence number counts from 0 to 62 repeatedly, with each
 // number being attached to 65536 samples.
+//
+// Audio data is packed into the top 6 bits based on position
+// within 512-sample frames.
 always @ (posedge clock, negedge nReset) begin
 	if (!nReset) begin
 		adcData <= 10'd0;
 		testData <= 10'd0;
 		sequenceCount <= 22'd0;
+		sample_in_frame <= 9'd0;
+		audio_left_latch <= 12'd0;
+		audio_right_latch <= 12'd0;
+		top_6_bits <= 6'd0;
 	end else begin
 		// Read the ADC data
 		adcData <= adc_databus;
@@ -72,6 +94,47 @@ always @ (posedge clock, negedge nReset) begin
 			testData <= 10'd0;
 		else
 			testData <= testData + 10'd1;
+		
+		// Latch new audio sample when ready
+		if (audio_ready) begin
+			audio_left_latch <= audio_left_in;
+			audio_right_latch <= audio_right_in;
+		end
+		
+		// Determine top 6 bits based on position in frame
+		case (sample_in_frame)
+			// Sync pattern (samples 0-7)
+			9'd0: top_6_bits <= SYNC_PATTERN[5:0];
+			9'd1: top_6_bits <= SYNC_PATTERN[11:6];
+			9'd2: top_6_bits <= SYNC_PATTERN[17:12];
+			9'd3: top_6_bits <= SYNC_PATTERN[23:18];
+			9'd4: top_6_bits <= SYNC_PATTERN[29:24];
+			9'd5: top_6_bits <= SYNC_PATTERN[35:30];
+			9'd6: top_6_bits <= SYNC_PATTERN[41:36];
+			9'd7: top_6_bits <= SYNC_PATTERN[47:42];
+			
+			// Audio left channel (samples 8-9)
+			9'd8:  top_6_bits <= audio_left_latch[11:6];
+			9'd9:  top_6_bits <= audio_left_latch[5:0];
+			
+			// Audio right channel (samples 10-11)
+			9'd10: top_6_bits <= audio_right_latch[11:6];
+			9'd11: top_6_bits <= audio_right_latch[5:0];
+			
+			// CRC-12 (samples 12-13) - placeholder zeros for now
+			9'd12: top_6_bits <= 6'd0;
+			9'd13: top_6_bits <= 6'd0;
+			
+			// Sequence number (samples 14-511)
+			default: top_6_bits <= sequenceCount[21:16];
+		endcase
+		
+		// Increment frame position
+		if (sample_in_frame == 9'd511) begin
+			sample_in_frame <= 9'd0;
+		end else begin
+			sample_in_frame <= sample_in_frame + 9'd1;
+		end
 		
 		// Sequence number generation
 		if (sequenceCount == (6'd63 << 16) - 1)
