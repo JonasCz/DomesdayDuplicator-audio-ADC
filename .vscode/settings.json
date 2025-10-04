@@ -1,0 +1,15 @@
+{
+    // Verilog/SystemVerilog settings
+    "verilog.linting.linter": "none",
+    "verilog.ctags.path": "",
+    
+    // File associations
+    "files.associations": {
+        "*.v": "verilog",
+        "*.sv": "systemverilog",
+        "*.qsf": "tcl",
+        "*.sdc": "tcl",
+        "*.cdf": "tcl"
+    }
+}
+

@@ -1,0 +1,66 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Quartus: Build FPGA",
+            "type": "shell",
+            "command": "${workspaceFolder}/DE0-NANO/DomesdayDuplicator/build.bat",
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            }
+        },
+        {
+            "label": "Quartus: Program FPGA (SRAM)",
+            "type": "shell",
+            "command": "${workspaceFolder}/DE0-NANO/DomesdayDuplicator/program.bat",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Quartus: Program Flash (Permanent)",
+            "type": "shell",
+            "command": "${workspaceFolder}/DE0-NANO/DomesdayDuplicator/program_flash.bat",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "label": "Quartus: Build and Program",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Quartus: Build FPGA",
+                "Quartus: Program FPGA (SRAM)"
+            ],
+            "problemMatcher": [],
+            "group": "build"
+        },
+        {
+            "label": "Quartus: Clean",
+            "type": "shell",
+            "command": "cd ${workspaceFolder}/DE0-NANO/DomesdayDuplicator && if exist output_files rmdir /s /q output_files && if exist db rmdir /s /q db && if exist incremental_db rmdir /s /q incremental_db",
+            "windows": {
+                "command": "cd ${workspaceFolder}/DE0-NANO/DomesdayDuplicator && if exist output_files rmdir /s /q output_files && if exist db rmdir /s /q db && if exist incremental_db rmdir /s /q incremental_db"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Quartus: Open GUI",
+            "type": "shell",
+            "command": "start quartus ${workspaceFolder}/DE0-NANO/DomesdayDuplicator/DomesdayDuplicator.qpf",
+            "problemMatcher": []
+        }
+    ]
+}
+
