@@ -1,3 +1,34 @@
+# An experiment to add an audio ADC to the Domesday Duplicator (DdD)
+
+* 78.125khz
+* Audio packed into the 6 bits of each RF sample that are currently used for the sequence counter. Plan is to change the sequence counting logic a bit to accomodate both audio and sequence counter.
+
+Note this is very experimental and not ready yet!
+
+First test using the De0-nano integrated ADC. Wiring:
+
+```
+                         3v3
+	             	      |
+	             		  |
+					Resistor 20k
+                          |
+                          |
+Audio L -> Capacitor 63uF -> ADC input pin
+                          |
+                          |
+                    Resistor 20k
+	             	      |
+	             		  |
+	             		 GND
+```
+
+Or as a photo:
+
+![DdD_with_adc.jpg](DdD_with_adc.jpg)
+
+Raw audio sample: https://drive.google.com/file/d/1YDUgs62EAt5DQ-i5lx5EXW8916SzUuaT/view?usp=drivesdk (note: has a lot of DC offset, hiss)
+
 # Domesday Duplicator (DdD)
 
 Please see the [Project Wiki](https://github.com/simoninns/DomesdayDuplicator/wiki) for details of the project and for access to the project documentation.
