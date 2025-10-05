@@ -70,6 +70,10 @@ public:
     size_t GetRecentClippedMaxSampleCount() const;
     bool GetTransferHadSequenceNumbers() const;
 
+    // Audio capture methods
+    size_t GetAudioFrameCount() const;
+    size_t GetAudioFileSizeWrittenInBytes() const;
+
     // Buffer sampling methods
     void QueueBufferSampleRequest(size_t requestedSampleLengthInBytes);
     bool GetNextBufferSample(std::vector<uint8_t>& sampleBuffer);
@@ -154,6 +158,12 @@ private:
     bool VerifyTestSequence(size_t diskBufferIndex);
     bool ConvertRawSampleData(size_t diskBufferIndex, CaptureFormat captureFormat, std::vector<uint8_t>& outputBuffer) const;
 
+    // Audio processing methods
+    uint64_t ExtractSyncPattern(uint8_t* buffer, size_t byteOffset) const;
+    uint16_t Extract12BitAudio(uint8_t* buffer, size_t byteOffset, size_t sampleIndex) const;
+    bool WriteAudioFramesToWav(const std::vector<int16_t>& leftSamples, const std::vector<int16_t>& rightSamples);
+    bool FinalizeAudioWavFile();
+
     // Utility methods
     bool SetCurrentProcessRealtimePriority(ProcessPriorityRestoreInfo& priorityRestoreInfo);
     void RestoreCurrentProcessPriority(const ProcessPriorityRestoreInfo& priorityRestoreInfo);
@@ -214,6 +224,15 @@ private:
 #ifdef _WIN32
     HANDLE windowsCaptureOutputFileHandle;
 #endif
+
+    // Audio output file state
+    std::filesystem::path audioFilePath;
+    std::ofstream audioOutputFile;
+    std::vector<int16_t> audioLeftBuffer;
+    std::vector<int16_t> audioRightBuffer;
+    std::atomic<size_t> audioFrameCount = 0;
+    std::atomic<size_t> audioFileSizeWrittenInBytes = 0;
+    bool audioSyncLocked = false;
 
     // Sequence/test data state
     SequenceState sequenceState = SequenceState::Sync;

@@ -114,6 +114,51 @@ bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureF
     }
 #endif
 
+    // Create audio WAV file with same base name as RF file
+    audioFilePath = filePath;
+    audioFilePath.replace_extension(".audio.wav");
+
+    audioOutputFile.clear();
+    audioOutputFile.open(audioFilePath, std::ios::out | std::ios::trunc | std::ios::binary);
+    if (!audioOutputFile.is_open())
+    {
+        Log().Error("StartCapture(): Failed to create audio output file at path {0}", audioFilePath);
+        captureResult = TransferResult::FileCreationError;
+        captureOutputFile.close();
+        return false;
+    }
+
+    // Write WAV header (will be updated with final sizes on close)
+    struct WavHeader {
+        char riff[4] = {'R','I','F','F'};
+        uint32_t fileSize = 0;  // Will update on close
+        char wave[4] = {'W','A','V','E'};
+        char fmt[4] = {'f','m','t',' '};
+        uint32_t fmtSize = 16;
+        uint16_t audioFormat = 1;  // PCM
+        uint16_t numChannels = 2;  // Stereo
+        uint32_t sampleRate = 78125;
+        uint32_t byteRate = 78125 * 2 * 2;  // sampleRate * channels * bytesPerSample
+        uint16_t blockAlign = 4;  // channels * bytesPerSample
+        uint16_t bitsPerSample = 16;
+        char data[4] = {'d','a','t','a'};
+        uint32_t dataSize = 0;  // Will update on close
+    };
+
+    WavHeader header;
+    audioOutputFile.write(reinterpret_cast<const char*>(&header), sizeof(header));
+
+    if (!audioOutputFile.good())
+    {
+        Log().Error("StartCapture(): Failed to write audio WAV header");
+        captureResult = TransferResult::FileCreationError;
+        audioOutputFile.close();
+        captureOutputFile.close();
+        return false;
+    }
+
+    Log().Info("StartCapture(): Audio file created: {0}", audioFilePath.string());
+
     // Calculate the optimal read buffer size and number of disk buffers, and initialize the structures. We use an
     // unusual case of wrapping an array new into a unique_ptr rather than std::vector here, as we have an atomic_flag
     // member in the structure which can't be moved.
@@ -165,6 +210,15 @@ bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureF
     savedSequenceCounter = 0;
     expectedNextTestDataValue.reset();
     testDataMax.reset();
+
+    // Initialize audio capture state
+    audioSyncLocked = false;
+    audioFrameCount = 0;
+    audioFileSizeWrittenInBytes = 0;
+    audioLeftBuffer.clear();
+    audioRightBuffer.clear();
+    audioLeftBuffer.reserve(2048);
+    audioRightBuffer.reserve(2048);
 
     // Spin up a thread to handle the execution of the capture process from here on
     std::thread captureThread(std::bind(std::mem_fn(&UsbDeviceBase::CaptureThread), this));
@@ -218,6 +272,12 @@ void UsbDeviceBase::StopCapture()
 #ifdef _WIN32
     }
 #endif
+
+    // Finalize and close the audio WAV file
+    if (audioOutputFile.is_open())
+    {
+        FinalizeAudioWavFile();
+    }
 
     // Disconnect from the target device
     DisconnectFromDevice();
@@ -528,6 +588,18 @@ bool UsbDeviceBase::GetTransferHadSequenceNumbers() const
 }
 
 //----------------------------------------------------------------------------------------------------------------------
+size_t UsbDeviceBase::GetAudioFrameCount() const
+{
+    return audioFrameCount;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+size_t UsbDeviceBase::GetAudioFileSizeWrittenInBytes() const
+{
+    return audioFileSizeWrittenInBytes;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
 bool UsbDeviceBase::UsbTransferDumpBuffers() const
 {
     return dumpAllCaptureDataInProgress.test();
@@ -830,75 +902,84 @@ void UsbDeviceBase::ProcessingThread()
 //----------------------------------------------------------------------------------------------------------------------
 bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBufferIndex, size_t& processedSampleCount, uint16_t& minValue, uint16_t& maxValue, size_t& minClippedCount, size_t& maxClippedCount)
 {
-    // If sequence checking has already failed, return false immediately. This condition should not occur, as a
-    // sequence failure is treated as an unrecoverable error and aborts the capture process. If this is to be changed,
-    // note that we would still need to perform sequence number stripping and update our sample metrics below, so this
-    // condition here should be removed and the rest of the function allowed to run.
+    // If sequence checking has already failed, return false immediately.
     if (sequenceState == SequenceState::Failed)
     {
         return false;
     }
 
-    // Retrieve the previous sequence counter number. If we don't have a saved sequence number because we're just
-    // starting a capture and we need to synchronize with the device, extract the sequence number from the buffer
-    // and calculate the previous sequence number from it as a starting point.
+    const uint64_t AUDIO_SYNC_PATTERN = 0xDEADBEEFCAFE;
     const uint16_t minPossibleSampleValue = 0;
     const uint16_t maxPossibleSampleValue = 0b1111111111;
     const int COUNTER_SHIFT = 16;
     const uint32_t COUNTER_MAX = 0b111111;
-    uint32_t sequenceCounter = savedSequenceCounter;
+    const size_t SAMPLES_PER_FRAME = 512;
+    const size_t BYTES_PER_FRAME = SAMPLES_PER_FRAME * 2;
+
     uint8_t* diskBuffer = diskBufferEntries[diskBufferIndex].readBuffer.data();
-    if (sequenceState == SequenceState::Sync)
-    {
-        // Initialize the sequence counter to an impossible value
-        sequenceCounter = 0xFFFFFFFF;
+    uint32_t sequenceCounter = savedSequenceCounter;
 
-        // Get the first sequence number from the buffer
-        uint32_t firstSequenceNumber = (uint32_t)(diskBuffer[1] >> 2);
+    // Clear audio buffers at start of processing
+    audioLeftBuffer.clear();
+    audioRightBuffer.clear();
 
-        // Find the first time the sequence number changes. Since each sequence number appears on (1 << COUNTER_SHIFT)
-        // samples, at worst we will see a change within (1 << COUNTER_SHIFT) + 1 samples.
-        for (size_t pointer = 2; pointer < ((1 << COUNTER_SHIFT) + 1) * 2; pointer += 2)
-        {
-            uint32_t sequenceNumber = diskBuffer[pointer + 1] >> 2;
-            if (sequenceNumber != firstSequenceNumber)
-            {
-                // Found it -- compute sequenceCounter's value at the start of the buffer
-                if (sequenceNumber == 0)
-                {
-                    sequenceNumber = COUNTER_MAX;
-                }
-                sequenceCounter = (sequenceNumber << COUNTER_SHIFT) - ((uint32_t)pointer / 2);
-                break;
+    // Process buffer in 512-sample frames (1024 bytes per frame)
+    for (size_t frameStart = 0; frameStart < diskBufferSizeInBytes; frameStart += BYTES_PER_FRAME) {
+
+        // Step 1: Validate sync pattern (samples 0-7) - MUST be present before processing any data
+        uint64_t sync = ExtractSyncPattern(diskBuffer, frameStart);
+        if (sync != AUDIO_SYNC_PATTERN) {
+            if (sequenceState == SequenceState::Sync) {
+                // Still trying to lock on, skip this frame entirely
+                Log().Trace("ProcessSequenceMarkersAndUpdateSampleMetrics(): Searching for sync pattern...");
+                continue;
             }
+            // We were locked but lost sync - this is a fatal error
+            Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Audio sync lost at byte offset {0} (expected 0x{1:X}, got 0x{2:X})",
+                frameStart, AUDIO_SYNC_PATTERN, sync);
+            sequenceState = SequenceState::Failed;
+            return false;
         }
 
-        // If no sequence numbers were detected, disable sequence checking, otherwise activate it.
-        if (sequenceCounter == 0xFFFFFFFF)
-        {
-            Log().Warning("ProcessSequenceMarkersAndUpdateSampleMetrics(): Data does not include sequence numbers");
-            sequenceState = SequenceState::Disabled;
-        }
-        else
-        {
-            Log().Trace("ProcessSequenceMarkersAndUpdateSampleMetrics(): Synchronised with data sequence numbers");
+        // If we were syncing, mark as locked now that we found the pattern
+        if (sequenceState == SequenceState::Sync) {
             sequenceState = SequenceState::Running;
-        }
-    }
+            audioSyncLocked = true;
+            Log().Info("ProcessSequenceMarkersAndUpdateSampleMetrics(): Audio sync locked at byte offset {0}", frameStart);
 
-    // Validate sequence number progression, and update our sample metrics.
-    for (size_t i = 0; i < diskBufferSizeInBytes; i += 2)
-    {
-        // If sequence checking is active, validate sequence numbers for this sample.
-        if (sequenceState == SequenceState::Running)
-        {
-            // Ensure the sequence number in this sample matches the expected value. Note that this is treated as an
-            // unrecoverable and immediate fail, so we abort any further processing and return false here.
-            uint32_t expected = sequenceCounter >> COUNTER_SHIFT;
-            uint32_t sequenceNumber = (uint32_t)(diskBuffer[i + 1] >> 2);
-            if (sequenceNumber != expected)
-            {
-                Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Sequence number mismatch! Expecting {0} but got {1}", expected, sequenceNumber);
+            // Initialize sequence counter to start of this frame (sample 14)
+            sequenceCounter = 14;
+        }
+
+        // Step 2: Extract audio data (samples 8-11)
+        uint16_t audioLeftUnsigned = Extract12BitAudio(diskBuffer, frameStart, 8);
+        uint16_t audioRightUnsigned = Extract12BitAudio(diskBuffer, frameStart, 10);
+
+        // Convert from unsigned (0-4095) to signed, centered at 2048
+        int16_t audioLeft = (int16_t)audioLeftUnsigned - 2048;
+        int16_t audioRight = (int16_t)audioRightUnsigned - 2048;
+
+        // Store audio samples in buffer
+        audioLeftBuffer.push_back(audioLeft);
+        audioRightBuffer.push_back(audioRight);
+
+        // Step 3: Validate audio CRC (samples 12-13)
+        // TODO: Implement CRC-12 validation
+        // uint16_t expectedCrc = Extract12BitAudio(diskBuffer, frameStart, 12);
+        // uint16_t calculatedCrc = CalculateAudioCrc12(diskBuffer, frameStart);
+        // if (expectedCrc != calculatedCrc) {
+        //     Log().Warning("Audio CRC mismatch at byte offset {0} (expected 0x{1:X}, got 0x{2:X})",
+        //         frameStart, expectedCrc, calculatedCrc);
+        // }
+
+        // Step 4: Validate sequence numbers (samples 14-511)
+        uint32_t expectedSeq = sequenceCounter >> COUNTER_SHIFT;
+        for (size_t sampleIdx = 14; sampleIdx < SAMPLES_PER_FRAME; sampleIdx++) {
+            size_t byteOffset = frameStart + sampleIdx * 2;
+            uint32_t actualSeq = (uint32_t)(diskBuffer[byteOffset + 1] >> 2);
+            if (actualSeq != expectedSeq) {
+                Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Sequence number mismatch at sample {0}! Expecting {1} but got {2}",
+                    (frameStart / 2) + sampleIdx, expectedSeq, actualSeq);
                 sequenceState = SequenceState::Failed;
                 savedSequenceCounter = sequenceCounter;
                 return false;
@@ -912,29 +993,40 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
             }
         }
 
-        // Remove the sequence number from the sample in the disk buffer (modify the source data)
-        diskBuffer[i + 1] &= 0x03;
+        // Step 5: Update RF sample metrics for all 512 samples
+        for (size_t sampleIdx = 0; sampleIdx < SAMPLES_PER_FRAME; sampleIdx++) {
+            size_t byteOffset = frameStart + sampleIdx * 2;
 
-        // Get the original 10-bit unsigned value from the disk data buffer
-        uint16_t originalValue = (uint16_t)diskBuffer[i + 0] | ((uint16_t)diskBuffer[i + 1] << 8);
+            // First, strip the top 6 bits (will contain audio/sync/sequence data)
+            diskBuffer[byteOffset + 1] &= 0x03;
 
-        // Update our min/max values
-        minValue = std::min(minValue, originalValue);
-        maxValue = std::max(maxValue, originalValue);
+            // Extract RF data (lower 10 bits)
+            uint16_t rfSample = (uint16_t)diskBuffer[byteOffset] |
+                               ((uint16_t)diskBuffer[byteOffset + 1] << 8);
 
-        // If the sample value is either the minimum or maximum value, increment our clipped sample counts.
-        if (originalValue == minPossibleSampleValue)
-        {
-            ++minClippedCount;
+            // Update min/max values
+            minValue = std::min(minValue, rfSample);
+            maxValue = std::max(maxValue, rfSample);
+
+            // Check for clipping
+            if (rfSample == minPossibleSampleValue) {
+                ++minClippedCount;
+            } else if (rfSample == maxPossibleSampleValue) {
+                ++maxClippedCount;
+            }
         }
-        else if (originalValue == maxPossibleSampleValue)
-        {
-            ++maxClippedCount;
-        }
+
+        processedSampleCount += SAMPLES_PER_FRAME;
     }
 
-    // Set the processed sample count for this buffer
-    processedSampleCount += diskBufferSizeInBytes / 2;
+    // Write audio buffer to WAV file if we have data (flush every buffer)
+    if (!audioLeftBuffer.empty()) {
+        if (!WriteAudioFramesToWav(audioLeftBuffer, audioRightBuffer)) {
+            Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Failed to write audio frames to WAV file");
+            return false;
+        }
+        audioFrameCount += audioLeftBuffer.size();
+    }
 
     // Save the resulting sequence counter so we can continue checking from the same position in the next buffer
     savedSequenceCounter = sequenceCounter;
@@ -1067,6 +1159,92 @@ bool UsbDeviceBase::ConvertRawSampleData(size_t diskBufferIndex, CaptureFormat c
         Log().Error("ConvertRawSampleData(): Unknown capture format {0} specified", captureFormat);
         return false;
     }
+    return true;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+// Audio processing methods
+//----------------------------------------------------------------------------------------------------------------------
+
+// Extract 48-bit sync pattern from samples 0-7 (6 bits per sample from top 6 bits)
+uint64_t UsbDeviceBase::ExtractSyncPattern(uint8_t* buffer, size_t byteOffset) const
+{
+    uint64_t pattern = 0;
+    for (size_t i = 0; i < 8; i++) {
+        size_t offset = byteOffset + i * 2;
+        uint8_t bits6 = (buffer[offset + 1] >> 2) & 0x3F;
+        pattern |= ((uint64_t)bits6 << (i * 6));
+    }
+    return pattern;
+}
+
+// Extract 12-bit audio value from two consecutive samples (6 bits each from top 6 bits)
+uint16_t UsbDeviceBase::Extract12BitAudio(uint8_t* buffer, size_t byteOffset, size_t sampleIndex) const
+{
+    // Extract 12 bits from 2 samples (6 bits each)
+    size_t offset1 = byteOffset + sampleIndex * 2;
+    size_t offset2 = byteOffset + (sampleIndex + 1) * 2;
+    uint8_t high6 = (buffer[offset1 + 1] >> 2) & 0x3F;
+    uint8_t low6 = (buffer[offset2 + 1] >> 2) & 0x3F;
+    return ((uint16_t)high6 << 6) | (uint16_t)low6;
+}
+
+// Write audio frames to WAV file
+bool UsbDeviceBase::WriteAudioFramesToWav(const std::vector<int16_t>& leftSamples, const std::vector<int16_t>& rightSamples)
+{
+    if (!audioOutputFile.is_open()) {
+        return false;
+    }
+
+    if (leftSamples.size() != rightSamples.size()) {
+        Log().Error("WriteAudioFramesToWav(): Left and right sample counts don't match");
+        return false;
+    }
+
+    // Write audio frames as 16-bit stereo PCM, interleaved
+    for (size_t i = 0; i < leftSamples.size(); i++) {
+        // Scale 12-bit signed (-2048 to +2047) to 16-bit signed (-32768 to +32767)
+        // Multiply by 16 to use full 16-bit range
+        int16_t left16 = leftSamples[i] * 16;
+        int16_t right16 = rightSamples[i] * 16;
+
+        // Write little-endian
+        audioOutputFile.write(reinterpret_cast<const char*>(&left16), 2);
+        audioOutputFile.write(reinterpret_cast<const char*>(&right16), 2);
+    }
+
+    audioFileSizeWrittenInBytes += leftSamples.size() * 4; // 2 channels * 2 bytes per sample
+
+    return audioOutputFile.good();
+}
+
+// Finalize WAV file by updating header with final sizes
+bool UsbDeviceBase::FinalizeAudioWavFile()
+{
+    if (!audioOutputFile.is_open()) {
+        return false;
+    }
+
+    // Get current file size
+    audioOutputFile.flush();
+    std::streampos currentPos = audioOutputFile.tellp();
+    size_t totalFileSize = static_cast<size_t>(currentPos);
+
+    // Update RIFF chunk size (file size - 8)
+    audioOutputFile.seekp(4);
+    uint32_t riffChunkSize = static_cast<uint32_t>(totalFileSize - 8);
+    audioOutputFile.write(reinterpret_cast<const char*>(&riffChunkSize), 4);
+
+    // Update data chunk size (file size - 44)
+    audioOutputFile.seekp(40);
+    uint32_t dataChunkSize = static_cast<uint32_t>(totalFileSize - 44);
+    audioOutputFile.write(reinterpret_cast<const char*>(&dataChunkSize), 4);
+
+    audioOutputFile.close();
+
+    Log().Info("Audio file finalized: {0} ({1} frames, {2} bytes)",
+        audioFilePath.string(), audioFrameCount.load(), totalFileSize);
+
     return true;
 }
 
