@@ -60,6 +60,99 @@
             "type": "shell",
             "command": "start quartus ${workspaceFolder}/DE0-NANO/DomesdayDuplicator/DomesdayDuplicator.qpf",
             "problemMatcher": []
+        },
+        {
+            "label": "CMake: Configure",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-S",
+                "${workspaceFolder}/Linux-Application",
+                "-B",
+                "${workspaceFolder}/Linux-Application/build",
+                "-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            }
+        },
+        {
+            "label": "CMake: Build DomesdayDuplicator",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/Linux-Application/build",
+                "--config",
+                "Release",
+                "--target",
+                "DomesdayDuplicator"
+            ],
+            "problemMatcher": "$msCompile",
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "CMake: Clean",
+            "type": "shell",
+            "command": "if exist ${workspaceFolder}\\Linux-Application\\build rmdir /s /q ${workspaceFolder}\\Linux-Application\\build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Deploy Qt Dependencies",
+            "type": "shell",
+            "command": "C:/vcpkg/installed/x64-windows/tools/qt6/bin/windeployqt6.exe",
+            "args": [
+                "--release",
+                "--no-translations",
+                "${workspaceFolder}/Linux-Application/build/DomesdayDuplicator/Release/DomesdayDuplicator.exe"
+            ],
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Run: DomesdayDuplicator",
+            "type": "shell",
+            "command": "${workspaceFolder}/Linux-Application/build/DomesdayDuplicator/Release/DomesdayDuplicator.exe",
+            "args": [
+                "--debug"
+            ],
+            "options": {
+                "env": {
+                    "PATH": "C:/vcpkg/installed/x64-windows/bin;C:/vcpkg/installed/x64-windows/tools/qt6/bin;${env:PATH}"
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "focus": true
+            }
+        },
+        {
+            "label": "Build and Run: DomesdayDuplicator",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "CMake: Configure",
+                "CMake: Build DomesdayDuplicator",
+                "Deploy Qt Dependencies",
+                "Run: DomesdayDuplicator"
+            ],
+            "problemMatcher": [],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
         }
     ]
 }
