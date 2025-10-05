@@ -233,6 +233,8 @@ private:
     std::atomic<size_t> audioFrameCount = 0;
     std::atomic<size_t> audioFileSizeWrittenInBytes = 0;
     bool audioSyncLocked = false;
+    size_t audioFrameOffset = 0;  // Tracks sample offset within current 512-sample frame
+    
 
     // Sequence/test data state
     SequenceState sequenceState = SequenceState::Sync;
