@@ -1189,15 +1189,10 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
                 pcmLeft &= 0xFFFFFF;
                 pcmRight &= 0xFFFFFF;
                 
-                // Convert from offset binary to signed by subtracting midpoint
-                // 24-bit midpoint is 0x800000 (8388608)
-                int32_t pcmLeftSigned = (int32_t)pcmLeft - 0x800000;
-                int32_t pcmRightSigned = (int32_t)pcmRight - 0x800000;
+                // PCM1802 outputs 24-bit two's-complement. Sign-extend bit 23.
+                int32_t pcmLeftSigned = (pcmLeft & 0x800000) ? (int32_t)(pcmLeft | 0xFF000000) : (int32_t)pcmLeft;
+                int32_t pcmRightSigned = (pcmRight & 0x800000) ? (int32_t)(pcmRight | 0xFF000000) : (int32_t)pcmRight;
                 
-                // DEBUG: Show final signed values
-                if (pcm_debug3 <= 10) {
-                    Log().Info("Final signed: Left={0} Right={1}", pcmLeftSigned, pcmRightSigned);
-                }
                 audio24LeftBuffer.push_back(pcmLeftSigned);
                 audio24RightBuffer.push_back(pcmRightSigned);
             }

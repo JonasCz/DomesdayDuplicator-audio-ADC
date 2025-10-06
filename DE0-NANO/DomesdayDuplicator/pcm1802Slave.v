@@ -57,7 +57,7 @@ always @(posedge bck or negedge nReset) begin
     end
 end
 
-// Data capture: I2S format, 24 MSBs valid after LRCK edge, sample on BCK falling edges
+// Data capture: Left-justified, 24-bit MSB-first; sample on BCK falling edges
 reg [4:0] bit_index;
 reg [23:0] shift_reg;
 reg        capture_active;
@@ -79,29 +79,28 @@ always @(negedge bck or negedge nReset) begin
         // Detect LRCK edge
         lrck_d <= lrck;
         if (lrck_d != lrck) begin
-            // Start a new channel capture after LRCK transition
+            // Start a new channel capture at LRCK transition and latch MSB now (left-justified)
             capture_active <= 1'b1;
-            bit_index <= 5'd0;
-            shift_reg <= 24'd0;
-            // I2S standard: LRCK = 0 -> left channel
+            // First bit (MSB) is valid immediately after LRCK transition
+            shift_reg <= {shift_reg[22:0], dout};
+            bit_index <= 5'd1; // already captured 1 bit
+            // PCM1802: LRCK = 0 -> left channel
             current_left <= (lrck == 1'b0);
         end else if (capture_active) begin
-            // bit_index 0: alignment bit (discard)
-            if (bit_index == 5'd0) begin
-                bit_index <= 5'd1;
-            end else if (bit_index <= 5'd24) begin
+            if (bit_index < 5'd24) begin
+                // Shift in the next bit
                 shift_reg <= {shift_reg[22:0], dout};
-                bit_index <= bit_index + 5'd1;
-                if (bit_index == 5'd24) begin
-                    // Completed 24 data bits for this channel
+                // If this was the 24th bit, commit using the just-shifted value
+                if (bit_index == 5'd23) begin
                     if (current_left) begin
-                        left_out <= shift_reg;
+                        left_out <= {shift_reg[22:0], dout};
                     end else begin
-                        right_out <= shift_reg;
+                        right_out <= {shift_reg[22:0], dout};
                         sample_ready <= 1'b1; // Both channels now valid
                     end
                     capture_active <= 1'b0; // wait for next LRCK edge
                 end
+                bit_index <= bit_index + 5'd1;
             end
         end
     end
