@@ -26,26 +26,50 @@ if not exist "DomesdayDuplicator.sof" (
     exit /b 1
 )
 
-echo Detecting USB Blaster...
-quartus_pgm -l
+echo Resetting JTAG server to clear stale connections...
+jtagconfig --stop >nul 2>&1
+timeout /t 1 /nobreak >nul
 echo.
+
+REM Retry loop to handle intermittent USB-Blaster detection
+set MAX_RETRIES=10
+set RETRY_COUNT=0
+
+:retry_programming
+set /a RETRY_COUNT+=1
+
+if %RETRY_COUNT% GTR 1 (
+    echo Attempt %RETRY_COUNT% of %MAX_RETRIES%...
+    timeout /t 1 /nobreak >nul
+)
 
 echo Programming FPGA (SRAM configuration - volatile)...
 echo This will be lost on power cycle.
 echo.
 quartus_pgm -c USB-Blaster -m JTAG -o "p;DomesdayDuplicator.sof@1"
 
-if %ERRORLEVEL% NEQ 0 (
+if %ERRORLEVEL% EQU 0 goto programming_success
+
+REM Check if we should retry
+if %RETRY_COUNT% LSS %MAX_RETRIES% (
     echo.
-    echo ERROR: Programming failed
-    echo.
-    echo Troubleshooting:
-    echo 1. Check USB Blaster is connected
-    echo 2. Check DE0-Nano is powered on
-    echo 3. Check USB Blaster driver is installed
-    echo 4. Try running Quartus Programmer GUI
-    exit /b 1
+    echo Programming attempt failed, retrying...
+    goto retry_programming
 )
+
+REM All retries exhausted
+echo.
+echo ERROR: Programming failed after %MAX_RETRIES% attempts
+echo.
+echo Troubleshooting:
+echo 1. Check USB Blaster is connected
+echo 2. Check DE0-Nano is powered on
+echo 3. Check USB Blaster driver is installed
+echo 4. Try running Quartus Programmer GUI
+echo 5. Try unplugging and replugging the USB cable
+exit /b 1
+
+:programming_success
 
 echo.
 echo ========================================

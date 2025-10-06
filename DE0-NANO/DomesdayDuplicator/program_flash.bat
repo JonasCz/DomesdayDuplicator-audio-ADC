@@ -30,6 +30,11 @@ if not exist "output_files\DomesdayDuplicator.sof" (
 )
 
 echo.
+echo Resetting JTAG server to clear stale connections...
+jtagconfig --stop >nul 2>&1
+timeout /t 1 /nobreak >nul
+echo.
+
 echo [1/2] Converting .sof to .jic format...
 quartus_cpf -c DomesdayDuplicator.cof
 
@@ -38,14 +43,37 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
+REM Retry loop to handle intermittent USB-Blaster detection
+set MAX_RETRIES=10
+set RETRY_COUNT=0
+
+:retry_flash_programming
+set /a RETRY_COUNT+=1
+
+if %RETRY_COUNT% GTR 1 (
+    echo Attempt %RETRY_COUNT% of %MAX_RETRIES%...
+    timeout /t 1 /nobreak >nul
+)
+
 echo [2/2] Programming flash memory...
 echo This may take 1-2 minutes...
 quartus_pgm -c USB-Blaster DomesdayDuplicator_write_jic.cdf
 
-if %ERRORLEVEL% NEQ 0 (
-    echo ERROR: Flash programming failed
-    exit /b 1
+if %ERRORLEVEL% EQU 0 goto flash_programming_success
+
+REM Check if we should retry
+if %RETRY_COUNT% LSS %MAX_RETRIES% (
+    echo.
+    echo Flash programming attempt failed, retrying...
+    goto retry_flash_programming
 )
+
+REM All retries exhausted
+echo ERROR: Flash programming failed after %MAX_RETRIES% attempts
+echo Try unplugging and replugging the USB cable
+exit /b 1
+
+:flash_programming_success
 
 echo.
 echo ========================================
