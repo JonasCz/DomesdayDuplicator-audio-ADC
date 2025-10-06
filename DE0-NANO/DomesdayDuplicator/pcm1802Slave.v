@@ -57,14 +57,15 @@ always @(posedge bck or negedge nReset) begin
     end
 end
 
-// Data capture: Left-justified, 24-bit MSB-first; sample on BCK falling edges
+// Data capture: Left-justified, 24-bit MSB-first; per datasheet DOUT valid
+// after BCK falling edge, so sample on BCK rising edges
 reg [4:0] bit_index;
 reg [23:0] shift_reg;
 reg        capture_active;
 reg        lrck_d;
 reg        current_left;
 
-always @(negedge bck or negedge nReset) begin
+always @(posedge bck or negedge nReset) begin
     if (!nReset) begin
         bit_index <= 5'd0;
         shift_reg <= 24'd0;
