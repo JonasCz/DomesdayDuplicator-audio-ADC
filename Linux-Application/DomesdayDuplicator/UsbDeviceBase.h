@@ -73,6 +73,8 @@ public:
     // Audio capture methods
     size_t GetAudioFrameCount() const;
     size_t GetAudioFileSizeWrittenInBytes() const;
+    size_t GetAudio24FrameCount() const;
+    size_t GetAudio24FileSizeWrittenInBytes() const;
 
     // Buffer sampling methods
     void QueueBufferSampleRequest(size_t requestedSampleLengthInBytes);
@@ -163,6 +165,9 @@ private:
     uint16_t Extract12BitAudio(uint8_t* buffer, size_t byteOffset, size_t sampleIndex) const;
     bool WriteAudioFramesToWav(const std::vector<int16_t>& leftSamples, const std::vector<int16_t>& rightSamples);
     bool FinalizeAudioWavFile();
+    uint32_t Extract24BitTop6x4(uint8_t* buffer, size_t byteOffset) const;
+    bool WriteAudio24FramesToWav(const std::vector<int32_t>& leftSamples, const std::vector<int32_t>& rightSamples);
+    bool FinalizeAudio24WavFile();
 
     // Utility methods
     bool SetCurrentProcessRealtimePriority(ProcessPriorityRestoreInfo& priorityRestoreInfo);
@@ -234,7 +239,13 @@ private:
     std::atomic<size_t> audioFileSizeWrittenInBytes = 0;
     bool audioSyncLocked = false;
     size_t audioFrameOffset = 0;  // Tracks sample offset within current 512-sample frame
-    
+    // PCM1802 24-bit audio output file state
+    std::filesystem::path audio24FilePath;
+    std::ofstream audio24OutputFile;
+    std::vector<int32_t> audio24LeftBuffer;
+    std::vector<int32_t> audio24RightBuffer;
+    std::atomic<size_t> audio24FrameCount = 0;
+    std::atomic<size_t> audio24FileSizeWrittenInBytes = 0;
 
     // Sequence/test data state
     SequenceState sequenceState = SequenceState::Sync;

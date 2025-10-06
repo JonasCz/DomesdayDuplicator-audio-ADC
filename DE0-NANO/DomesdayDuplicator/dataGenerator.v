@@ -35,6 +35,11 @@ module dataGenerator (
 	input [11:0] audio_right_in,
 	input audio_ready,
 	
+	// PCM1802 24-bit audio inputs
+	input [23:0] pcm_left_in,
+	input [23:0] pcm_right_in,
+	input pcm_ready,
+	
 	// Outputs
 	output [15:0] dataOut
 );
@@ -55,11 +60,15 @@ reg [8:0] sample_in_frame;
 reg [11:0] audio_left_latch;
 reg [11:0] audio_right_latch;
 
+// Latched PCM1802 audio data (24-bit)
+reg [23:0] pcm_left_latch;
+reg [23:0] pcm_right_latch;
+
 // Top 6 bits: depends on position in frame
 reg [5:0] top_6_bits;
 
-// Sync pattern: 0xDEADBEEFCAFE
-localparam [47:0] SYNC_PATTERN = 48'hDEADBEEFCAFE;
+// Sync pattern: 0xDEADBEEFCAFEDEADBEEFCAFE (96-bit)
+localparam [95:0] SYNC_PATTERN = 96'hDEADBEEFCAFEDEADBEEFCAFE;
 
 // Output assignments
 assign dataOut[15:10] = top_6_bits;
@@ -100,34 +109,63 @@ always @ (posedge clock, negedge nReset) begin
 			audio_left_latch <= audio_left_in;
 			audio_right_latch <= audio_right_in;
 		end
+		// Latch new PCM1802 sample when ready
+		if (pcm_ready) begin
+			pcm_left_latch <= pcm_left_in;
+			pcm_right_latch <= pcm_right_in;
+		end
 		
 		// Determine top 6 bits based on position in frame
-		case (sample_in_frame)
-			// Sync pattern (samples 0-7)
-			9'd0: top_6_bits <= SYNC_PATTERN[5:0];
-			9'd1: top_6_bits <= SYNC_PATTERN[11:6];
-			9'd2: top_6_bits <= SYNC_PATTERN[17:12];
-			9'd3: top_6_bits <= SYNC_PATTERN[23:18];
-			9'd4: top_6_bits <= SYNC_PATTERN[29:24];
-			9'd5: top_6_bits <= SYNC_PATTERN[35:30];
-			9'd6: top_6_bits <= SYNC_PATTERN[41:36];
-			9'd7: top_6_bits <= SYNC_PATTERN[47:42];
-			
-			// Audio left channel (samples 8-9)
-			9'd8:  top_6_bits <= audio_left_latch[11:6];
-			9'd9:  top_6_bits <= audio_left_latch[5:0];
-			
-			// Audio right channel (samples 10-11)
-			9'd10: top_6_bits <= audio_right_latch[11:6];
-			9'd11: top_6_bits <= audio_right_latch[5:0];
-			
-			// CRC-12 (samples 12-13) - placeholder zeros for now
-			9'd12: top_6_bits <= 6'd0;
-			9'd13: top_6_bits <= 6'd0;
-			
-			// Sequence number (samples 14-511)
-			default: top_6_bits <= sequenceCount[21:16];
-		endcase
+        // New layout: 0..15 = 96-bit sync (16 samples)
+		// 16..19 = ADC128 12-bit L/R (4 samples)
+		// 20..21 = CRC placeholders
+		// 22..25 = PCM1802 Left 24-bit (4 samples)
+		// 26..29 = PCM1802 Right 24-bit (4 samples)
+		// 30..511 = Sequence number
+        case (sample_in_frame)
+            // Sync pattern (samples 0-15)
+            9'd0:  top_6_bits <= SYNC_PATTERN[5:0];
+            9'd1:  top_6_bits <= SYNC_PATTERN[11:6];
+            9'd2:  top_6_bits <= SYNC_PATTERN[17:12];
+            9'd3:  top_6_bits <= SYNC_PATTERN[23:18];
+            9'd4:  top_6_bits <= SYNC_PATTERN[29:24];
+            9'd5:  top_6_bits <= SYNC_PATTERN[35:30];
+            9'd6:  top_6_bits <= SYNC_PATTERN[41:36];
+            9'd7:  top_6_bits <= SYNC_PATTERN[47:42];
+            9'd8:  top_6_bits <= SYNC_PATTERN[53:48];
+            9'd9:  top_6_bits <= SYNC_PATTERN[59:54];
+            9'd10: top_6_bits <= SYNC_PATTERN[65:60];
+            9'd11: top_6_bits <= SYNC_PATTERN[71:66];
+            9'd12: top_6_bits <= SYNC_PATTERN[77:72];
+            9'd13: top_6_bits <= SYNC_PATTERN[83:78];
+            9'd14: top_6_bits <= SYNC_PATTERN[89:84];
+            9'd15: top_6_bits <= SYNC_PATTERN[95:90];
+
+            // Temporarily keep existing ADC128 audio at samples 16..19 (left/right 12-bit)
+            9'd16: top_6_bits <= audio_left_latch[11:6];
+            9'd17: top_6_bits <= audio_left_latch[5:0];
+            9'd18: top_6_bits <= audio_right_latch[11:6];
+            9'd19: top_6_bits <= audio_right_latch[5:0];
+
+            // CRC placeholders (20..21)
+            9'd20: top_6_bits <= 6'd0;
+            9'd21: top_6_bits <= 6'd0;
+
+			// PCM1802 Left 24-bit (22..25)
+			9'd22: top_6_bits <= pcm_left_latch[23:18];
+			9'd23: top_6_bits <= pcm_left_latch[17:12];
+			9'd24: top_6_bits <= pcm_left_latch[11:6];
+			9'd25: top_6_bits <= pcm_left_latch[5:0];
+
+			// PCM1802 Right 24-bit (26..29)
+			9'd26: top_6_bits <= pcm_right_latch[23:18];
+			9'd27: top_6_bits <= pcm_right_latch[17:12];
+			9'd28: top_6_bits <= pcm_right_latch[11:6];
+			9'd29: top_6_bits <= pcm_right_latch[5:0];
+
+			// Sequence number for remaining samples
+            default: top_6_bits <= sequenceCount[21:16];
+        endcase
 		
 		// Increment frame position
 		if (sample_in_frame == 9'd511) begin

@@ -34,7 +34,13 @@ module DomesdayDuplicator(
 	output       ADC_CS_N,
 	output       ADC_SCLK,
 	output       ADC_SADDR,
-	input        ADC_SDAT
+	input        ADC_SDAT,
+
+	// JP3 header (subset used): map PCM1802 here
+	output       GPIO_23,   // JP3 pin 8
+	output       GPIO_25,   // JP3 pin 10
+	output       GPIO_20,   // JP3 pin 5
+	input        GPIO_2_IN0 // JP3 pin 2
 );
 
 // FX3 Hardware mapping begins ------------------------------------------------
@@ -272,6 +278,21 @@ wire [11:0] audio_left;
 wire [11:0] audio_right;
 wire audio_ready;
 
+// PCM1802 signals (JP3)
+wire pcm_bck;
+wire pcm_lrck;
+wire pcm_scki;
+wire pcm_dout;
+wire [23:0] pcm_left;
+wire [23:0] pcm_right;
+wire pcm_ready;
+
+// Map PCM1802 pins to JP3 header
+assign GPIO_23 = pcm_bck;     // BCK out (choose JP3 GPIO_23)
+assign GPIO_25 = pcm_lrck;    // LRCK out (choose JP3 GPIO_25)
+assign GPIO_20 = pcm_scki;    // SCKI out (choose JP3 GPIO_20)
+assign pcm_dout = GPIO_2_IN0; // DOUT in (JP3 dedicated input)
+
 // Audio SPI controller for ADC128S022
 adc128spiController audioController0 (
 	// Inputs
@@ -302,9 +323,29 @@ dataGenerator dataGenerator0 (
 	.audio_left_in(audio_left),     // 12-bit left audio
 	.audio_right_in(audio_right),   // 12-bit right audio
 	.audio_ready(audio_ready),      // Audio sample ready
+	// PCM1802 inputs
+	.pcm_left_in(pcm_left),
+	.pcm_right_in(pcm_right),
+	.pcm_ready(pcm_ready),
 	
 	// Outputs
 	.dataOut(dataGeneratorOut)		// 16-bit data out
+);
+
+// PCM1802 slave interface (FPGA as master)
+pcm1802Slave pcm1802_0 (
+	.clk_40MHz(adc_clock),
+	.nReset(fx3_nReset),
+	// Outputs to PCM1802
+	.bck(pcm_bck),
+	.lrck(pcm_lrck),
+	.scki(pcm_scki),
+	// Input from PCM1802
+	.dout(pcm_dout),
+	// Captured audio
+	.left_out(pcm_left),
+	.right_out(pcm_right),
+	.sample_ready(pcm_ready)
 );
 
 // FIFO buffer
