@@ -1046,6 +1046,14 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
                 uint16_t audioLeftUnsigned = Extract12BitAudio(diskBuffer, audioSampleOffset * 2, 0);
                 uint16_t audioRightUnsigned = Extract12BitAudio(diskBuffer, audioSampleOffset * 2, 2);
                 
+                // DEBUG: Log first few samples to see what we're actually getting
+                static int debugCount = 0;
+                if (debugCount < 10) {
+                    Log().Info("DEBUG: Raw audio values: L={0} (0x{1:X}), R={2} (0x{3:X})", 
+                        audioLeftUnsigned, audioLeftUnsigned, audioRightUnsigned, audioRightUnsigned);
+                    debugCount++;
+                }
+                
                 // Convert from unsigned (0-4095) to signed, centered at 2048
                 int16_t audioLeft = (int16_t)audioLeftUnsigned - 2048;
                 int16_t audioRight = (int16_t)audioRightUnsigned - 2048;
