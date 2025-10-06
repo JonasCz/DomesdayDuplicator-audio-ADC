@@ -37,7 +37,7 @@
             }
         },
         {
-            "label": "Quartus: Build and Program",
+            "label": "Quartus: Build and Program FPGA (SRAM)",
             "dependsOrder": "sequence",
             "dependsOn": [
                 "Quartus: Build FPGA",
