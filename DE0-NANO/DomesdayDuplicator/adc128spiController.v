@@ -105,13 +105,23 @@ always @(posedge clk_40MHz, negedge nReset) begin
 				end else begin
 					spi_din <= 1'b0;  // Don't care bits
 				end
-				
+
 			end else begin  
 				// Falling edge of SCLK - sample data
 				// Data valid after 4th clock, 12 bits total
-				if (bit_count >= 5'd4 && bit_count <= 5'd15)
+				if (bit_count >= 5'd4 && bit_count <= 5'd15) begin
+					// Shift in this bit
 					shift_reg <= {shift_reg[10:0], spi_dout};
-				
+
+					// On the last bit, latch the full 12-bit word including DB0
+					if (bit_count == 5'd15) begin
+						if (channel_select == 1'b0)
+							audio_left  <= {shift_reg[10:0], spi_dout};
+						else
+							audio_right <= {shift_reg[10:0], spi_dout};
+					end
+				end
+
 				// Increment bit counter
 				bit_count <= bit_count + 5'd1;
 				
@@ -119,7 +129,6 @@ always @(posedge clk_40MHz, negedge nReset) begin
 				if (bit_count == 5'd15) begin
 					if (channel_select == 1'b0) begin
 						// Just finished left channel
-						audio_left <= shift_reg;
 						channel_select <= 1'b1;
 						spi_cs_n <= 1'b1;      // De-assert CS
 						spi_active <= 1'b0;
@@ -128,7 +137,6 @@ always @(posedge clk_40MHz, negedge nReset) begin
 						sample_counter <= 9'd0; // Reset for next channel
 					end else begin
 						// Just finished right channel
-						audio_right <= shift_reg;
 						channel_select <= 1'b0;
 						spi_cs_n <= 1'b1;      // De-assert CS
 						spi_active <= 1'b0;
