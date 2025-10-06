@@ -1,155 +1,159 @@
-/************************************************************************
-	
-	adc128spiController.v
-	SPI Controller for ADC128S022 audio ADC
-	
-	Domesday Duplicator - LaserDisc RF sampler
-	Copyright (C) 2025 Jonas Czech
-	
-	This file is part of Domesday Duplicator.
-	
-	Domesday Duplicator is free software: you can redistribute it and/or
-	modify it under the terms of the GNU General Public License as
-	published by the Free Software Foundation, either version 3 of the
-	License, or (at your option) any later version.
-	
-	This program is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-	GNU General Public License for more details.
-	
-	You should have received a copy of the GNU General Public License
-	along with this program.  If not, see <http://www.gnu.org/licenses/>.
-	
-************************************************************************/
-
 module adc128spiController (
-	// System clock and reset
-	input wire clk_40MHz,
-	input wire nReset,
-	
-	// SPI interface to ADC128S022
-	output reg spi_cs_n,        // Chip select (active low)
-	output reg spi_sclk,        // Serial clock (2.5 MHz)
-	output reg spi_din,         // Data to ADC (channel select)
-	input wire spi_dout,        // Data from ADC (conversion result)
-	
-	// Audio output (to dataGenerator)
-	output reg [11:0] audio_left,
-	output reg [11:0] audio_right,
-	output reg audio_ready       // Pulses every 512 RF clocks
+// System clock and reset
+input  wire        clk_40MHz,
+input  wire        nReset,
+
+// SPI interface to ADC128S022
+output reg         spi_cs_n,     // Chip select (active low)
+output reg         spi_sclk,     // Serial clock (2.5 MHz)
+output reg         spi_din,      // Data to ADC (channel select)
+input  wire        spi_dout,     // Data from ADC (conversion result)
+
+// Audio output (to dataGenerator)
+output reg  [11:0] audio_left,
+output reg  [11:0] audio_right,
+output reg         audio_ready   // Pulses once per L+R pair
+
 );
 
-// Clock divider: 40 MHz / 16 = 2.5 MHz
-// This creates an enable pulse every 16 clocks
-reg [3:0] clk_div;
-wire sclk_enable = (clk_div == 4'd15);
+// 40 MHz -> 2.5 MHz SCLK
+// Tick every 8 clocks, drive SCLK edges on ticks
+reg [2:0] clk_div;
+wire sclk_tick = (clk_div == 3'd7);
 
-always @(posedge clk_40MHz, negedge nReset) begin
+always @(posedge clk_40MHz or negedge nReset) begin
 	if (!nReset)
-		clk_div <= 4'd0;
+		clk_div <= 3'd0;
 	else
-		clk_div <= clk_div + 4'd1;  // Wraps at 16
+		clk_div <= clk_div + 3'd1; // wraps at 8
 end
 
-// SPI state machine
-reg [4:0] bit_count;           // 0-15 for 16 SCLK cycles
-reg [11:0] shift_reg;          // Shift register for received data
-reg channel_select;            // 0 = left (CH0), 1 = right (CH1)
-reg [8:0] sample_counter;      // Counts to 256 (for 512 RF clocks total)
-reg spi_active;                // Indicates SPI transaction in progress
+// FSM
+localparam ST_IDLE  = 2'd0;
+localparam ST_PREP  = 2'd1; // CS low, SCLK low, DIN preloaded, wait one tick
+localparam ST_SHIFT = 2'd2; // 16 SCLK rising edges
 
-always @(posedge clk_40MHz, negedge nReset) begin
+reg [1:0]  state;
+
+// Control word (MSB-first): [7:6]=00, [5:3]=ADD2:ADD0, [2:0]=000
+reg [7:0] ctrl;
+
+// Rising-edge counter (0..15 where 1..16 are rising edges in a frame)
+reg [4:0] rise_count;
+
+// Shift register and final latched sample
+reg [11:0] shift_reg;
+reg [11:0] sample_word;
+
+// Channel pipeline: sample you get now belongs to prev_channel;
+// we set up next_channel for the next frame.
+reg [2:0] prev_channel;
+reg [2:0] next_channel;
+
+always @(posedge clk_40MHz or negedge nReset) begin
 	if (!nReset) begin
-		spi_cs_n <= 1'b1;
-		spi_sclk <= 1'b0;
-		spi_din <= 1'b0;
-		bit_count <= 5'd0;
-		shift_reg <= 12'd0;
-		audio_left <= 12'd0;
-		audio_right <= 12'd0;
-		audio_ready <= 1'b0;
-		channel_select <= 1'b0;
-		sample_counter <= 9'd0;
-		spi_active <= 1'b0;
+		spi_cs_n     <= 1'b1;
+		spi_sclk     <= 1'b0;
+		spi_din      <= 1'b0;
+
+		audio_left   <= 12'd0;
+		audio_right  <= 12'd0;
+		audio_ready  <= 1'b0;
+
+		state        <= ST_IDLE;
+		rise_count   <= 5'd0;
+		shift_reg    <= 12'd0;
+		sample_word  <= 12'd0;
+
+		ctrl         <= 8'h00;
+		prev_channel <= 3'd0; // ADC defaults to CH0 after reset
+		next_channel <= 3'd0; // Start by requesting CH0
 	end else begin
-		audio_ready <= 1'b0;  // Default: clear ready flag
-		
-		// Sample counter increments every clock
-		// We trigger new conversions every 256 clocks
-		// Since we need 2 conversions (L+R), total is 512 RF clocks
-		sample_counter <= sample_counter + 9'd1;
-		
-		// Start new conversion when counter reaches 255 and no active SPI
-		if (sample_counter == 9'd255 && !spi_active) begin
-			spi_cs_n <= 1'b0;     // Assert CS to start conversion
-			spi_active <= 1'b1;
-			bit_count <= 5'd0;
-		end
-		
-		if (sclk_enable && spi_active) begin
-			// Toggle SCLK
-			spi_sclk <= ~spi_sclk;
-			
-			if (!spi_sclk) begin  
-				// Rising edge of SCLK - setup data
-				// Send channel select bits during first 3 clocks
-				// ADC128S022 expects 3-bit address: 000 for CH0, 001 for CH1
-				if (bit_count < 5'd3) begin
-					if (bit_count == 5'd0)
-						spi_din <= 1'b0;  // Bit 2 of address
-					else if (bit_count == 5'd1)
-						spi_din <= 1'b0;  // Bit 1 of address
-					else  // bit_count == 5'd2
-						spi_din <= channel_select;  // Bit 0: 0=CH0, 1=CH1
-				end else begin
-					spi_din <= 1'b0;  // Don't care bits
+		audio_ready <= 1'b0; // default
+
+		case (state)
+			ST_IDLE: begin
+				// Compose control word for upcoming frame
+				ctrl       <= {2'b00, next_channel, 3'b000};
+
+				// Assert CS, hold SCLK low, preset DIN to first (MSB) bit
+				spi_cs_n   <= 1'b0;
+				spi_sclk   <= 1'b0;
+				spi_din    <= ctrl[7];
+				rise_count <= 5'd0;
+				shift_reg  <= 12'd0;
+
+				// Hold DIN for at least one tick before first rising edge
+				state <= ST_PREP;
+			end
+
+			ST_PREP: begin
+				// Wait exactly one sclk_tick so DIN is stable before 1st rising edge
+				if (sclk_tick) begin
+					state <= ST_SHIFT;
 				end
+			end
 
-			end else begin  
-				// Falling edge of SCLK - sample data
-				// Data valid after 4th clock, 12 bits total
-				if (bit_count >= 5'd4 && bit_count <= 5'd15) begin
-					// Shift in this bit
-					shift_reg <= {shift_reg[10:0], spi_dout};
+			ST_SHIFT: begin
+				if (sclk_tick) begin
+					if (spi_sclk == 1'b0) begin
+						// Rising edge is about to be generated (we set spi_sclk=1 below)
+						// ADC latches DIN on this rising edge; we sample DOUT here.
+						// Count rising edges 1..16
+						// We use the old value of rise_count for decisions and then increment.
+						// Bits from DOUT are valid to sample on rising edges 5..16,
+						// which corresponds to rise_count values 4..15 before increment.
+						if (rise_count >= 5'd4 && rise_count <= 5'd15) begin
+							shift_reg <= {shift_reg[10:0], spi_dout};
+							if (rise_count == 5'd15) begin
+								sample_word <= {shift_reg[10:0], spi_dout};
+							end
+						end
 
-					// On the last bit, latch the full 12-bit word including DB0
-					if (bit_count == 5'd15) begin
-						if (channel_select == 1'b0)
-							audio_left  <= {shift_reg[10:0], spi_dout};
-						else
-							audio_right <= {shift_reg[10:0], spi_dout};
-					end
-				end
+						// Shift the control word AFTER the ADC latched current bit
+						ctrl <= {ctrl[6:0], 1'b0};
 
-				// Increment bit counter
-				bit_count <= bit_count + 5'd1;
-				
-				// After 16 clocks, conversion complete
-				if (bit_count == 5'd15) begin
-					if (channel_select == 1'b0) begin
-						// Just finished left channel
-						channel_select <= 1'b1;
-						spi_cs_n <= 1'b1;      // De-assert CS
-						spi_active <= 1'b0;
-						bit_count <= 5'd0;
-						shift_reg <= 12'd0;
-						sample_counter <= 9'd0; // Reset for next channel
+						// Advance rising edge count
+						rise_count <= rise_count + 5'd1;
+
+						// If that was the 16th rising edge (rise_count was 15), frame is done
+						if (rise_count == 5'd15) begin
+							// Store the sample according to the previous channel
+							case (prev_channel)
+								3'd0: audio_left  <= sample_word; // CH0
+								3'd1: audio_right <= sample_word; // CH1
+								default: ; // ignore other channels
+							endcase
+
+							// Pulse 'audio_ready' after CH1 completes (once per L+R pair)
+							if (prev_channel == 3'd1) begin
+								audio_ready <= 1'b1;
+							end
+
+							// Pipeline channel selection
+							prev_channel <= next_channel;
+							next_channel <= (next_channel == 3'd0) ? 3'd1 : 3'd0;
+
+							// End frame: deassert CS, force SCLK low, go idle
+							spi_cs_n <= 1'b1;
+							spi_sclk <= 1'b0;
+							state    <= ST_IDLE;
+						end else begin
+							// Normal rising edge: drive SCLK high
+							spi_sclk <= 1'b1;
+						end
 					end else begin
-						// Just finished right channel
-						channel_select <= 1'b0;
-						spi_cs_n <= 1'b1;      // De-assert CS
-						spi_active <= 1'b0;
-						bit_count <= 5'd0;
-						shift_reg <= 12'd0;
-						sample_counter <= 9'd0;
-						audio_ready <= 1'b1;   // Signal both channels ready
+						// Falling edge: ADC changes DOUT shortly after this,
+						// so we set up DIN here (stable for next rising edge)
+						spi_din  <= ctrl[7];
+						spi_sclk <= 1'b0;
 					end
 				end
 			end
-		end
+
+			default: state <= ST_IDLE;
+		endcase
 	end
 end
 
 endmodule
-
