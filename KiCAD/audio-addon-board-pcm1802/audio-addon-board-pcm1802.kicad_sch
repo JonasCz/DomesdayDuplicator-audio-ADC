@@ -3193,6 +3193,17 @@
 			(embedded_fonts no)
 		)
 	)
+	(text "Note: caps on board may be wrong, fix:\nChange to c18, c19 to 180pf (always) + c20 c21 8.2 nF (switched).\nResistor shorted + 8.2nF = 0dB\nResistor 47k (not shorted) + no 8.2nF (only 180pf) = -10dB"
+		(exclude_from_sim no)
+		(at 240.03 172.974 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "82c37784-47c6-4c50-97d2-402943d8e0a2")
+	)
 	(text "SCKI, BCK, LRCK, FSYNC, DOUT all 22R"
 		(exclude_from_sim no)
 		(at 262.382 69.342 0)
@@ -11433,7 +11444,6 @@
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(fields_autoplaced yes)
 		(uuid "bbe2c359-5a0f-44f9-823d-78a8efe2ec8e")
 		(property "Reference" "C20"
 			(at 246.3736 142.24 90)
@@ -14402,7 +14412,6 @@
 		(in_bom yes)
 		(on_board yes)
 		(dnp no)
-		(fields_autoplaced yes)
 		(uuid "ff66d8af-b133-498a-8617-ecb167683442")
 		(property "Reference" "C17"
 			(at 233.6863 158.75 90)
