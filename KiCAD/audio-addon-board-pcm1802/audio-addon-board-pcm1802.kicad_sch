@@ -3731,6 +3731,16 @@
 	)
 	(wire
 		(pts
+			(xy 116.84 185.42) (xy 116.84 165.1)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "1ad2e442-8fa1-43dd-b86f-9368379f49d0")
+	)
+	(wire
+		(pts
 			(xy 269.24 148.59) (xy 271.78 148.59)
 		)
 		(stroke
@@ -3778,6 +3788,16 @@
 			(type default)
 		)
 		(uuid "20e2ee2e-6e70-4864-a1be-87a3671e7cac")
+	)
+	(wire
+		(pts
+			(xy 127 162.56) (xy 114.3 162.56)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "21452ce4-5a0e-495f-92df-c1867cf26f83")
 	)
 	(wire
 		(pts
@@ -4068,6 +4088,16 @@
 			(type default)
 		)
 		(uuid "416c3331-3a0e-4520-9170-ebc4ec1f9d75")
+	)
+	(wire
+		(pts
+			(xy 114.3 165.1) (xy 83.82 165.1)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "43a045fb-4634-4b45-9d3f-1f7eef64aa17")
 	)
 	(wire
 		(pts
@@ -4371,6 +4401,16 @@
 	)
 	(wire
 		(pts
+			(xy 116.84 165.1) (xy 133.35 165.1)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "67bec450-9531-483a-bbdd-0d0ccb7115b2")
+	)
+	(wire
+		(pts
 			(xy 187.96 64.77) (xy 194.31 64.77)
 		)
 		(stroke
@@ -4398,6 +4438,16 @@
 			(type default)
 		)
 		(uuid "6aa06fe8-890e-4e35-ada8-fb66ec97d60a")
+	)
+	(wire
+		(pts
+			(xy 71.12 167.64) (xy 63.5 167.64)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "6c3d3a53-3728-45d9-b324-d87be251e65b")
 	)
 	(wire
 		(pts
@@ -4598,6 +4648,16 @@
 			(type default)
 		)
 		(uuid "8d80b491-3124-41e2-ab2d-64df1dddefc1")
+	)
+	(wire
+		(pts
+			(xy 63.5 185.42) (xy 116.84 185.42)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "91314fc9-c68a-4877-893d-cab5bdf4a26a")
 	)
 	(wire
 		(pts
@@ -5061,6 +5121,16 @@
 	)
 	(wire
 		(pts
+			(xy 63.5 167.64) (xy 63.5 185.42)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ba3edd67-f669-4a97-aaac-ef6acea2626c")
+	)
+	(wire
+		(pts
 			(xy 207.01 100.33) (xy 207.01 101.6)
 		)
 		(stroke
@@ -5341,16 +5411,6 @@
 	)
 	(wire
 		(pts
-			(xy 83.82 165.1) (xy 133.35 165.1)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "e5bebc53-8ce9-4c00-b86c-ed02b49be24c")
-	)
-	(wire
-		(pts
 			(xy 215.9 67.31) (xy 215.9 71.12)
 		)
 		(stroke
@@ -5371,16 +5431,6 @@
 	)
 	(wire
 		(pts
-			(xy 83.82 162.56) (xy 127 162.56)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "ef97c99b-d3b4-4e9d-a118-cba74a77227b")
-	)
-	(wire
-		(pts
 			(xy 264.16 139.7) (xy 271.78 139.7)
 		)
 		(stroke
@@ -5398,6 +5448,16 @@
 			(type default)
 		)
 		(uuid "f6212457-5689-4d6f-854d-7f0b25bd50e0")
+	)
+	(wire
+		(pts
+			(xy 114.3 162.56) (xy 114.3 165.1)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f6bf3b28-b621-45d1-86d9-d50ade25e40b")
 	)
 	(wire
 		(pts
@@ -5948,6 +6008,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C23345"
+			(at 266.7 77.47 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "a216d33f-d596-4960-9b7c-689f231c7e6a")
 		)
@@ -6075,6 +6144,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
+			(at 48.26 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C21120"
 			(at 48.26 63.5 0)
 			(effects
 				(font
@@ -6369,7 +6447,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(fields_autoplaced yes)
 		(uuid "177d07d7-dfd7-4031-a178-7c2752c3f837")
 		(property "Reference" "J3"
@@ -6505,7 +6583,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "1c2f2e23-011d-4998-9062-4d6649f227c9")
 		(property "Reference" "RBYPASS1"
 			(at 214.63 114.3 90)
@@ -6686,6 +6764,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C15849"
+			(at 360.68 35.56 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "9a590793-f4b6-471f-8c42-c29986923d3d")
 		)
@@ -6822,6 +6909,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C14858"
+			(at 289.56 146.05 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "eeacb61c-e216-4730-aead-a838741e2d36")
 		)
@@ -6911,7 +7007,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(fields_autoplaced yes)
 		(uuid "26687ab5-0e52-4a64-a531-05b9d524de9d")
 		(property "Reference" "J5"
@@ -6979,7 +7075,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "26faeba0-f8f6-49f7-a38b-6339159cdd6f")
 		(property "Reference" "RFMT1"
 			(at 214.63 96.52 90)
@@ -7086,6 +7182,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
+			(at 30.48 54.61 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C96446"
 			(at 30.48 54.61 0)
 			(effects
 				(font
@@ -7314,7 +7419,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(fields_autoplaced yes)
 		(uuid "302cafd5-b82e-4e78-aea2-627bdcc2f4d1")
 		(property "Reference" "RFMT0"
@@ -7563,6 +7668,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C96446"
+			(at 246.38 39.37 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "a649d510-fc55-492a-90e5-0af32fd9d354")
 		)
@@ -7633,6 +7747,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21190"
+			(at 133.35 147.32 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "21ef7541-a2b2-41b6-809d-afccc06c6cef")
 		)
@@ -7695,6 +7818,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
+			(at 289.56 160.02 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C14858"
 			(at 289.56 160.02 0)
 			(effects
 				(font
@@ -7902,6 +8034,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C22936"
+			(at 222.25 67.31 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "1b35e393-fcb0-4c80-8018-e2ea62cdb2c1")
 		)
@@ -7924,7 +8065,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "55bf0dfd-4bd1-4e20-bf90-f218b00f0dd0")
 		(property "Reference" "ROSR1"
 			(at 214.63 105.41 90)
@@ -8170,6 +8311,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C1588"
+			(at 107.95 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "ed200dde-e2d7-41b5-82cc-30ad359ffe9d")
 		)
@@ -8231,6 +8381,15 @@
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
 			(at 149.86 139.7 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C15849"
+			(at 149.86 139.7 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -8365,6 +8524,15 @@
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
 			(at 149.86 165.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C15849"
+			(at 149.86 165.1 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -8574,6 +8742,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21190"
+			(at 133.35 158.75 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "8d5fb602-4fed-492c-a807-99e5cdb8f19d")
 		)
@@ -8710,6 +8887,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C676404"
+			(at 101.6 49.53 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "e2328e0d-72ae-425f-b63c-623ac0f5339a")
 		)
@@ -8795,6 +8981,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21189"
+			(at 331.47 80.01 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "d7d5d24f-c6c1-4316-824b-0bd252fb6147")
 		)
@@ -8855,6 +9050,15 @@
 			)
 		)
 		(property "Description" "4x DIP Switch, Single Pole Single Throw (SPST) switch, small symbol"
+			(at 261.62 153.67 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C319050"
 			(at 261.62 153.67 0)
 			(effects
 				(font
@@ -8943,6 +9147,15 @@
 			)
 		)
 		(property "Description" "Resistor, small symbol"
+			(at 133.35 175.26 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C21190"
 			(at 133.35 175.26 0)
 			(effects
 				(font
@@ -9153,6 +9366,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21189"
+			(at 232.41 113.03 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "e43a47d4-df72-4021-8632-47611940d4aa")
 		)
@@ -9223,6 +9445,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21190"
+			(at 133.35 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "b7df6e60-33cb-46f7-8636-7d79619dc704")
 		)
@@ -9283,6 +9514,15 @@
 		)
 		(property "Description" "Resistor, small symbol"
 			(at 377.19 44.45 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C23345"
+			(at 377.19 44.45 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -9360,6 +9600,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C96446"
+			(at 35.56 139.7 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "3984485f-6517-4117-b419-f4c5eebd6e64")
 		)
@@ -9422,6 +9671,15 @@
 		)
 		(property "Description" "Resistor, small symbol"
 			(at 266.7 74.93 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C23345"
+			(at 266.7 74.93 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -9563,6 +9821,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C1017"
+			(at 52.07 137.16 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "325f01e1-8c2a-48f4-a199-75f7e441efa6")
 		)
@@ -9624,6 +9891,15 @@
 		)
 		(property "Description" "Resistor, small symbol"
 			(at 278.13 139.7 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C21190"
+			(at 278.13 139.7 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -9764,6 +10040,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C53987"
+			(at 246.38 156.21 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "3352535b-c31c-4f1a-afbb-da606b95f6e0")
 		)
@@ -9834,6 +10119,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C96446"
+			(at 146.05 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "0a262f84-c0c8-4eab-a79f-a18692c0cf46")
 		)
@@ -9896,6 +10190,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
+			(at 20.32 54.61 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C96446"
 			(at 20.32 54.61 0)
 			(effects
 				(font
@@ -10037,6 +10340,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21190"
+			(at 278.13 165.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "bdb27cfa-9923-40d2-8572-37460a511a83")
 		)
@@ -10060,7 +10372,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "a2acf7f0-f617-46c1-a13a-dbb19fd58d8f")
 		(property "Reference" "RMODE1"
 			(at 331.47 71.12 90)
@@ -10304,6 +10616,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21189"
+			(at 234.95 121.92 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "6a17d9ef-50f4-44b6-85e3-410b1a266cc5")
 		)
@@ -10438,6 +10759,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21189"
+			(at 229.87 104.14 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "25e1274a-7a28-44c7-b623-e1353986fcf7")
 		)
@@ -10499,6 +10829,15 @@
 		)
 		(property "Description" "Resistor, small symbol"
 			(at 227.33 95.25 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C21189"
+			(at 227.33 95.25 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -10574,6 +10913,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21189"
+			(at 52.07 146.05 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "580c4df6-c334-4b60-a85e-09fdd0036654")
 		)
@@ -10642,6 +10990,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C15849"
+			(at 233.68 139.7 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "687479bd-f6e4-4fdc-8037-84474c0c180f")
 		)
@@ -10665,7 +11022,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(fields_autoplaced yes)
 		(uuid "aafc52eb-6e9b-49ed-9153-f81a9d8ed25d")
 		(property "Reference" "RMODE0"
@@ -10772,6 +11129,15 @@
 		)
 		(property "Description" "Resistor, small symbol"
 			(at 261.62 165.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C25819"
+			(at 261.62 165.1 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -11112,6 +11478,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C53987"
+			(at 246.38 148.59 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "6bc37027-f6f1-463d-915c-be4bcad7017e")
 		)
@@ -11182,6 +11557,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21189"
+			(at 228.6 57.15 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "8e91c339-e8ce-4126-b82b-6191c1c1c6b6")
 		)
@@ -11241,6 +11625,15 @@
 			)
 		)
 		(property "Description" "Single Buffer Gate Tri-State, Low-Voltage CMOS, SOT-23-5"
+			(at 358.14 44.45 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C23654"
 			(at 358.14 44.45 0)
 			(effects
 				(font
@@ -11327,6 +11720,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21120"
+			(at 48.26 54.61 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "aa03d22c-de8a-46dd-bd83-58d6cf5519d6")
 		)
@@ -11349,7 +11751,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(fields_autoplaced yes)
 		(uuid "c571495c-818a-4e45-9053-b132a54e9929")
 		(property "Reference" "J1"
@@ -11525,6 +11927,15 @@
 			)
 		)
 		(property "Description" "Resistor, small symbol"
+			(at 246.38 31.75 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C22936"
 			(at 246.38 31.75 0)
 			(effects
 				(font
@@ -11725,6 +12136,15 @@
 		)
 		(property "Description" "Resistor, small symbol"
 			(at 331.47 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C21189"
+			(at 331.47 60.96 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -12073,6 +12493,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C22936"
+			(at 185.42 64.77 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "c1054fed-6613-4219-9a06-fc7477150375")
 		)
@@ -12162,7 +12591,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(fields_autoplaced yes)
 		(uuid "d6336a76-c936-4858-9b67-2addc0eda485")
 		(property "Reference" "J4"
@@ -12269,6 +12698,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
+			(at 156.21 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C21120"
 			(at 156.21 63.5 0)
 			(effects
 				(font
@@ -12542,6 +12980,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C96446"
+			(at 215.9 73.66 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "40ee509d-e832-4036-b3b1-7d84191823b9")
 		)
@@ -12603,6 +13050,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
+			(at 132.08 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C21120"
 			(at 132.08 63.5 0)
 			(effects
 				(font
@@ -12679,6 +13135,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C25819"
+			(at 261.62 139.7 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "1"
 			(uuid "840dee41-bc77-4b08-89d5-ed6bccbb4a9f")
 		)
@@ -12741,6 +13206,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
+			(at 53.34 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C96446"
 			(at 53.34 63.5 0)
 			(effects
 				(font
@@ -12838,7 +13312,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "e39d9ad0-9c61-423b-b425-38e1296097e4")
 		(property "Reference" "TP1"
 			(at 274.066 98.298 0)
@@ -12856,7 +13330,7 @@
 				)
 			)
 		)
-		(property "Footprint" "TestPoint:TestPoint_Pad_2.0x2.0mm"
+		(property "Footprint" "TestPoint:TestPoint_Pad_D1.5mm"
 			(at 275.59 95.25 0)
 			(effects
 				(font
@@ -12950,6 +13424,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C96446"
+			(at 121.92 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "f8a6b9d2-8ade-42ed-afc2-8759437c4c83")
 		)
@@ -12972,7 +13455,7 @@
 		(exclude_from_sim no)
 		(in_bom yes)
 		(on_board yes)
-		(dnp no)
+		(dnp yes)
 		(uuid "e722ff3e-3f50-471e-8154-00289c2e727f")
 		(property "Reference" "R12"
 			(at 354.33 20.32 90)
@@ -13077,6 +13560,15 @@
 		)
 		(property "Description" "Resistor, small symbol"
 			(at 266.7 95.25 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C21189"
+			(at 266.7 95.25 90)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -13221,6 +13713,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C96446"
+			(at 176.53 71.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "1e9523d3-3e75-4024-9e7e-2defe1c6a15a")
 		)
@@ -13283,6 +13784,15 @@
 			)
 		)
 		(property "Description" ""
+			(at 278.13 49.53 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C1520787"
 			(at 278.13 49.53 0)
 			(effects
 				(font
@@ -13480,6 +13990,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21120"
+			(at 30.48 139.7 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "e294c6b3-d0ab-4c48-85db-76c82532b59d")
 		)
@@ -13617,6 +14136,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21120"
+			(at 256.54 31.75 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "d9900355-430f-4507-9070-f669ee2ff924")
 		)
@@ -13678,6 +14206,15 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
+			(at 228.6 73.66 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C21120"
 			(at 228.6 73.66 0)
 			(effects
 				(font
@@ -13755,6 +14292,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C21120"
+			(at 194.31 71.12 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "0408a7f8-a930-4fcf-adbc-617b610d9db0")
 		)
@@ -13824,6 +14370,15 @@
 				(hide yes)
 			)
 		)
+		(property "LCSC PN" "C23345"
+			(at 266.7 72.39 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
 		(pin "2"
 			(uuid "b9ed0786-0879-4e07-bf55-8a2c5a34b0b7")
 		)
@@ -13885,6 +14440,15 @@
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
 			(at 233.68 165.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC PN" "C15849"
+			(at 233.68 165.1 90)
 			(effects
 				(font
 					(size 1.27 1.27)

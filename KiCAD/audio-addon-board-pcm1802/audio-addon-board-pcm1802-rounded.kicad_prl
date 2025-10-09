@@ -58,7 +58,7 @@
     "ssh_key": ""
   },
   "meta": {
-    "filename": "audio-addon-board-pcm1802.kicad_prl",
+    "filename": "audio-addon-board-pcm1802-rounded.kicad_prl",
     "version": 5
   },
   "net_inspector_panel": {
