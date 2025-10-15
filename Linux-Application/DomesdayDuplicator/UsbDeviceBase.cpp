@@ -10,6 +10,7 @@
 #include <thread>
 #include <functional>
 #include <cassert>
+#include <cmath>
 
 //----------------------------------------------------------------------------------------------------------------------
 // Constructors
@@ -64,7 +65,7 @@ void UsbDeviceBase::SendConfigurationCommand(const std::string& preferredDeviceP
 //----------------------------------------------------------------------------------------------------------------------
 // Capture methods
 //----------------------------------------------------------------------------------------------------------------------
-bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureFormat format, const std::string& preferredDevicePath, bool isTestMode, bool useSmallUsbTransfers, bool useAsyncFileIo, size_t usbTransferQueueSizeInBytes, size_t diskBufferQueueSizeInBytes)
+bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureFormat format, AudioSource audioSource, const std::string& preferredDevicePath, bool isTestMode, bool useSmallUsbTransfers, bool useAsyncFileIo, size_t usbTransferQueueSizeInBytes, size_t diskBufferQueueSizeInBytes)
 {
     // If we're already performing a capture, abort any further processing.
     if (transferInProgress)
@@ -115,94 +116,102 @@ bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureF
     }
 #endif
 
-    // Create audio WAV file with same base name as RF file
-    audioFilePath = filePath;
-    audioFilePath.replace_extension(".audio.wav");
-
-    audioOutputFile.clear();
-    audioOutputFile.open(audioFilePath, std::ios::out | std::ios::trunc | std::ios::binary);
-    if (!audioOutputFile.is_open())
+    // Create 12-bit audio WAV file for ADC128s022 if requested
+    if (audioSource == AudioSource::Adc128s022 || audioSource == AudioSource::Both)
     {
-        Log().Error("StartCapture(): Failed to create audio output file at path {0}", audioFilePath);
-        captureResult = TransferResult::FileCreationError;
-        captureOutputFile.close();
-        return false;
+        audioFilePath = filePath;
+        audioFilePath.replace_extension("");
+        audioFilePath += "_audio_integrated_adc.wav";
+
+        audioOutputFile.clear();
+        audioOutputFile.open(audioFilePath, std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!audioOutputFile.is_open())
+        {
+            Log().Error("StartCapture(): Failed to create audio output file at path {0}", audioFilePath);
+            captureResult = TransferResult::FileCreationError;
+            captureOutputFile.close();
+            return false;
+        }
+
+        // Write WAV header (will be updated with final sizes on close)
+        struct WavHeader {
+            char riff[4] = {'R','I','F','F'};
+            uint32_t fileSize = 0;  // Will update on close
+            char wave[4] = {'W','A','V','E'};
+            char fmt[4] = {'f','m','t',' '};
+            uint32_t fmtSize = 16;
+            uint16_t audioFormat = 1;  // PCM
+            uint16_t numChannels = 2;  // Stereo
+            uint32_t sampleRate = 78125;
+            uint32_t byteRate = 78125 * 2 * 2;  // sampleRate * channels * bytesPerSample
+            uint16_t blockAlign = 4;  // channels * bytesPerSample
+            uint16_t bitsPerSample = 16;
+            char data[4] = {'d','a','t','a'};
+            uint32_t dataSize = 0;  // Will update on close
+        };
+
+        WavHeader header;
+        audioOutputFile.write(reinterpret_cast<const char*>(&header), sizeof(header));
+
+        if (!audioOutputFile.good())
+        {
+            Log().Error("StartCapture(): Failed to write audio WAV header");
+            captureResult = TransferResult::FileCreationError;
+            audioOutputFile.close();
+            captureOutputFile.close();
+            return false;
+        }
+
+        Log().Info("StartCapture(): 12-bit audio file created: {0}", audioFilePath.string());
     }
 
-    // Write WAV header (will be updated with final sizes on close)
-    struct WavHeader {
-        char riff[4] = {'R','I','F','F'};
-        uint32_t fileSize = 0;  // Will update on close
-        char wave[4] = {'W','A','V','E'};
-        char fmt[4] = {'f','m','t',' '};
-        uint32_t fmtSize = 16;
-        uint16_t audioFormat = 1;  // PCM
-        uint16_t numChannels = 2;  // Stereo
-        uint32_t sampleRate = 78125;
-        uint32_t byteRate = 78125 * 2 * 2;  // sampleRate * channels * bytesPerSample
-        uint16_t blockAlign = 4;  // channels * bytesPerSample
-        uint16_t bitsPerSample = 16;
-        char data[4] = {'d','a','t','a'};
-        uint32_t dataSize = 0;  // Will update on close
-    };
-
-    WavHeader header;
-    audioOutputFile.write(reinterpret_cast<const char*>(&header), sizeof(header));
-
-    if (!audioOutputFile.good())
+    // Create 24-bit PCM audio WAV file for PCM1802 if requested
+    if (audioSource == AudioSource::Pcm1802 || audioSource == AudioSource::Both)
     {
-        Log().Error("StartCapture(): Failed to write audio WAV header");
-        captureResult = TransferResult::FileCreationError;
-        audioOutputFile.close();
-        captureOutputFile.close();
-        return false;
+        audio24FilePath = filePath;
+        audio24FilePath.replace_extension("");
+        audio24FilePath += "_audio_external_adc.wav";
+
+        audio24OutputFile.clear();
+        audio24OutputFile.open(audio24FilePath, std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!audio24OutputFile.is_open())
+        {
+            Log().Error("StartCapture(): Failed to create 24-bit audio output file at path {0}", audio24FilePath);
+            captureResult = TransferResult::FileCreationError;
+            if (audioOutputFile.is_open()) audioOutputFile.close();
+            captureOutputFile.close();
+            return false;
+        }
+
+        struct WavHeader24 {
+            char riff[4] = {'R','I','F','F'};
+            uint32_t fileSize = 0;
+            char wave[4] = {'W','A','V','E'};
+            char fmt[4] = {'f','m','t',' '};
+            uint32_t fmtSize = 16;
+            uint16_t audioFormat = 1;  // PCM
+            uint16_t numChannels = 2;
+            uint32_t sampleRate = 78125;
+            uint32_t byteRate = 78125 * 2 * 3; // 3 bytes per sample
+            uint16_t blockAlign = 6;
+            uint16_t bitsPerSample = 24;
+            char data[4] = {'d','a','t','a'};
+            uint32_t dataSize = 0;
+        };
+
+        WavHeader24 header24;
+        audio24OutputFile.write(reinterpret_cast<const char*>(&header24), sizeof(header24));
+        if (!audio24OutputFile.good())
+        {
+            Log().Error("StartCapture(): Failed to write 24-bit audio WAV header");
+            captureResult = TransferResult::FileCreationError;
+            audio24OutputFile.close();
+            if (audioOutputFile.is_open()) audioOutputFile.close();
+            captureOutputFile.close();
+            return false;
+        }
+        Log().Info("StartCapture(): 24-bit audio file created: {0}", audio24FilePath.string());
     }
-
-    Log().Info("StartCapture(): Audio file created: {0}", audioFilePath.string());
-
-    // Create 24-bit PCM audio WAV file for PCM1802
-    audio24FilePath = filePath;
-    audio24FilePath.replace_extension(".audio24.wav");
-
-    audio24OutputFile.clear();
-    audio24OutputFile.open(audio24FilePath, std::ios::out | std::ios::trunc | std::ios::binary);
-    if (!audio24OutputFile.is_open())
-    {
-        Log().Error("StartCapture(): Failed to create 24-bit audio output file at path {0}", audio24FilePath);
-        captureResult = TransferResult::FileCreationError;
-        audioOutputFile.close();
-        captureOutputFile.close();
-        return false;
-    }
-
-    struct WavHeader24 {
-        char riff[4] = {'R','I','F','F'};
-        uint32_t fileSize = 0;
-        char wave[4] = {'W','A','V','E'};
-        char fmt[4] = {'f','m','t',' '};
-        uint32_t fmtSize = 16;
-        uint16_t audioFormat = 1;  // PCM
-        uint16_t numChannels = 2;
-        uint32_t sampleRate = 78125;
-        uint32_t byteRate = 78125 * 2 * 3; // 3 bytes per sample
-        uint16_t blockAlign = 6;
-        uint16_t bitsPerSample = 24;
-        char data[4] = {'d','a','t','a'};
-        uint32_t dataSize = 0;
-    };
-
-    WavHeader24 header24;
-    audio24OutputFile.write(reinterpret_cast<const char*>(&header24), sizeof(header24));
-    if (!audio24OutputFile.good())
-    {
-        Log().Error("StartCapture(): Failed to write 24-bit audio WAV header");
-        captureResult = TransferResult::FileCreationError;
-        audio24OutputFile.close();
-        audioOutputFile.close();
-        captureOutputFile.close();
-        return false;
-    }
-    Log().Info("StartCapture(): 24-bit audio file created: {0}", audio24FilePath.string());
 
     // Calculate the optimal read buffer size and number of disk buffers, and initialize the structures. We use an
     // unusual case of wrapping an array new into a unique_ptr rather than std::vector here, as we have an atomic_flag
@@ -227,7 +236,26 @@ bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureF
     // Record the capture settings
     captureFilePath = filePath;
     captureFormat = format;
+    captureAudioSource = audioSource;
     captureIsTestMode = isTestMode;
+    
+    // Log the audio source configuration
+    if (audioSource == AudioSource::None)
+    {
+        Log().Info("StartCapture(): Audio source: None - no audio files will be created");
+    }
+    else if (audioSource == AudioSource::Adc128s022)
+    {
+        Log().Info("StartCapture(): Audio source: ADC128s022 (12-bit integrated ADC)");
+    }
+    else if (audioSource == AudioSource::Pcm1802)
+    {
+        Log().Info("StartCapture(): Audio source: PCM1802 (24-bit external ADC)");
+    }
+    else if (audioSource == AudioSource::Both)
+    {
+        Log().Info("StartCapture(): Audio source: Both ADCs (12-bit + 24-bit)");
+    }
     currentUsbTransferQueueSizeInBytes = usbTransferQueueSizeInBytes;
     currentUseSmallUsbTransfers = useSmallUsbTransfers;
 
@@ -271,6 +299,17 @@ bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureF
     audio24RightBuffer.clear();
     audio24LeftBuffer.reserve(2048);
     audio24RightBuffer.reserve(2048);
+    
+    // Initialize audio statistics
+    audioMinSampleValue = std::numeric_limits<int32_t>::max();
+    audioMaxSampleValue = std::numeric_limits<int32_t>::min();
+    audioClippedMinSampleCount = 0;
+    audioClippedMaxSampleCount = 0;
+    audioRecentMinSampleValue = std::numeric_limits<int32_t>::max();
+    audioRecentMaxSampleValue = std::numeric_limits<int32_t>::min();
+    audioRecentClippedMinSampleCount = 0;
+    audioRecentClippedMaxSampleCount = 0;
+    audioMeanAmplitude = 0.0;
 
     // Spin up a thread to handle the execution of the capture process from here on
     std::thread captureThread(std::bind(std::mem_fn(&UsbDeviceBase::CaptureThread), this));
@@ -670,6 +709,60 @@ size_t UsbDeviceBase::GetAudio24FileSizeWrittenInBytes() const
 }
 
 //----------------------------------------------------------------------------------------------------------------------
+int32_t UsbDeviceBase::GetAudioMinSampleValue() const
+{
+    return audioMinSampleValue;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+int32_t UsbDeviceBase::GetAudioMaxSampleValue() const
+{
+    return audioMaxSampleValue;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+size_t UsbDeviceBase::GetAudioClippedMinSampleCount() const
+{
+    return audioClippedMinSampleCount;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+size_t UsbDeviceBase::GetAudioClippedMaxSampleCount() const
+{
+    return audioClippedMaxSampleCount;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+int32_t UsbDeviceBase::GetAudioRecentMinSampleValue() const
+{
+    return audioRecentMinSampleValue;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+int32_t UsbDeviceBase::GetAudioRecentMaxSampleValue() const
+{
+    return audioRecentMaxSampleValue;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+size_t UsbDeviceBase::GetAudioRecentClippedMinSampleCount() const
+{
+    return audioRecentClippedMinSampleCount;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+size_t UsbDeviceBase::GetAudioRecentClippedMaxSampleCount() const
+{
+    return audioRecentClippedMaxSampleCount;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+double UsbDeviceBase::GetAudioMeanAmplitude() const
+{
+    return audioMeanAmplitude;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
 bool UsbDeviceBase::UsbTransferDumpBuffers() const
 {
     return dumpAllCaptureDataInProgress.test();
@@ -978,18 +1071,30 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
         return false;
     }
 
-    // New 96-bit sync pattern broken into 2x 48-bit halves for extraction
-    const uint64_t AUDIO_SYNC_PATTERN_LOW48 = 0xDEADBEEFCAFEULL;
-    const uint64_t AUDIO_SYNC_PATTERN_HIGH48 = 0xDEADBEEFCAFEULL;
-    const uint16_t minPossibleSampleValue = 0;
-    const uint16_t maxPossibleSampleValue = 0b1111111111;
-    const int COUNTER_SHIFT = 16;
-    const uint32_t COUNTER_MAX = 0b111111;
+    // Frame structure constants (matches dataGenerator.v)
     const size_t SAMPLES_PER_FRAME = 512;
     const size_t BYTES_PER_FRAME = SAMPLES_PER_FRAME * 2;
+    
+    // 192-bit sync pattern (32 samples, firmware revision 20251015)
+    // Pattern from Verilog: 192'hDDDF20251015DDDF20251015DDDF20251016FEDCBA987654
+    // Note: Verilog ordering is MSB-first, so we reverse for extraction
+    const uint64_t SYNC_PATTERN[4] = {
+        0xFEDCBA987654ULL,  // Samples 0-7   (bits [47:0] - rightmost in Verilog)
+        0xDDDF20251016ULL,  // Samples 8-15  (bits [95:48])
+        0xDDDF20251015ULL,  // Samples 16-23 (bits [143:96])
+        0xDDDF20251015ULL   // Samples 24-31 (bits [191:144] - leftmost in Verilog)
+    };
+    const size_t SYNC_SAMPLES = 32;
+    const size_t ADC128_START = 32;
+    const size_t PCM1802_START = 38;
+    const size_t COUNTER_START = 48;
+    const size_t COUNTER_SAMPLES_PER_VALUE = 8;
+    
+    const uint16_t minPossibleSampleValue = 0;
+    const uint16_t maxPossibleSampleValue = 0b1111111111;
 
     uint8_t* diskBuffer = diskBufferEntries[diskBufferIndex].readBuffer.data();
-    uint32_t sequenceCounter = savedSequenceCounter;
+    uint64_t expectedCounter = savedSequenceCounter;
     size_t bufferSampleCount = diskBufferSizeInBytes / 2;
 
     // Clear audio buffers at start of processing
@@ -997,80 +1102,65 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
     audioRightBuffer.clear();
     audio24LeftBuffer.clear();
     audio24RightBuffer.clear();
+    
+    // Reset recent audio statistics for this buffer
+    audioRecentMinSampleValue = std::numeric_limits<int32_t>::max();
+    audioRecentMaxSampleValue = std::numeric_limits<int32_t>::min();
+    audioRecentClippedMinSampleCount = 0;
+    audioRecentClippedMaxSampleCount = 0;
 
-    // If we're in sync state, search for the sync pattern
+    // If we're in sync state, search for the sync pattern and lock
     size_t sampleIndex = 0;
     if (sequenceState == SequenceState::Sync)
     {
-        Log().Info("ProcessSequenceMarkersAndUpdateSampleMetrics(): Searching for audio sync pattern...");
+        Log().Info("ProcessSequenceMarkersAndUpdateSampleMetrics(): Searching for 192-bit sync pattern...");
         
         // Search through the buffer sample by sample to find the sync pattern
         bool syncFound = false;
-        for (size_t searchSample = 0; searchSample <= bufferSampleCount - 512; searchSample++)
+        size_t searchLimit = (bufferSampleCount >= 512) ? (bufferSampleCount - 512) : 0;
+        
+        for (size_t searchSample = 0; searchSample <= searchLimit; searchSample++)
         {
-            // Check 96-bit sync: first 8 samples (low 48) and next 8 samples (high 48)
-            uint64_t syncLow = ExtractSyncPattern(diskBuffer, searchSample * 2);
-            uint64_t syncHigh = ExtractSyncPattern(diskBuffer, (searchSample + 8) * 2);
-            if (syncLow == AUDIO_SYNC_PATTERN_LOW48 && syncHigh == AUDIO_SYNC_PATTERN_HIGH48)
+            // Check 192-bit sync pattern (32 samples, 4 x 48-bit chunks)
+            bool patternMatches = true;
+            for (size_t chunk = 0; chunk < 4 && patternMatches; chunk++)
+            {
+                uint64_t extracted = ExtractSyncPattern(diskBuffer, (searchSample + chunk * 8) * 2);
+                if (extracted != SYNC_PATTERN[chunk])
+                {
+                    patternMatches = false;
+                }
+            }
+            
+            if (patternMatches)
             {
                 // Found the sync pattern! This is the start of a frame
                 sampleIndex = searchSample;
+                syncFound = true;
                 
-                // Read the actual sequence number from sample 30 of this frame (first sequence-bearing sample)
-                size_t seqSampleOffset = searchSample + 30;
-                if (seqSampleOffset < bufferSampleCount)
-                {
-                    uint32_t actualSeqNum = (uint32_t)(diskBuffer[seqSampleOffset * 2 + 1] >> 2);
-                    
-                    // Initialize sequence counter: we're at sample 30 of a frame with this sequence number
-                    // The sequence counter tracks position within the 4,128,768 sample cycle
-                    // We set it so that (sequenceCounter >> 16) gives us the actual sequence number
-                    sequenceCounter = (actualSeqNum << COUNTER_SHIFT) | 30;
-                    
-                    Log().Info("ProcessSequenceMarkersAndUpdateSampleMetrics(): Audio sync locked at sample {0} (byte offset {1}), sequence number = {2}", 
-                        searchSample, searchSample * 2, actualSeqNum);
-                    
-                    sequenceState = SequenceState::Running;
-                    audioSyncLocked = true;
-                    audioFrameOffset = 0;
-                    syncFound = true;
-                    break;
-                }
+                // Extract first counter value from samples 48-55 of this frame
+                size_t firstCounterSample = searchSample + COUNTER_START;
+                uint64_t counterValue = Extract48BitCounter(diskBuffer, firstCounterSample * 2);
+                
+                Log().Info("ProcessSequenceMarkersAndUpdateSampleMetrics(): Sync locked at sample {0} (byte {1}), counter = 0x{2:X}", 
+                    searchSample, searchSample * 2, counterValue);
+                
+                sequenceState = SequenceState::Running;
+                audioSyncLocked = true;
+                audioFrameOffset = 0;
+                expectedCounter = counterValue;
+                break;
             }
         }
         
+        // If no sync found by end of search, it's an error
         if (!syncFound)
         {
-            // Didn't find sync pattern in this buffer, process samples without audio extraction
-            Log().Trace("ProcessSequenceMarkersAndUpdateSampleMetrics(): Sync pattern not found in this buffer");
-            
-            // Still need to update RF sample metrics for all samples
-            for (size_t i = 0; i < bufferSampleCount; i++)
-            {
-                size_t byteOffset = i * 2;
-                
-                // Strip the top 6 bits
-                diskBuffer[byteOffset + 1] &= 0x03;
-                
-                // Extract RF data (lower 10 bits)
-                uint16_t rfSample = (uint16_t)diskBuffer[byteOffset] |
-                                   ((uint16_t)diskBuffer[byteOffset + 1] << 8);
-                
-                // Update min/max values
-                minValue = std::min(minValue, rfSample);
-                maxValue = std::max(maxValue, rfSample);
-                
-                // Check for clipping
-                if (rfSample == minPossibleSampleValue) {
-                    ++minClippedCount;
-                } else if (rfSample == maxPossibleSampleValue) {
-                    ++maxClippedCount;
-                }
-            }
-            
-            processedSampleCount += bufferSampleCount;
-            savedSequenceCounter = sequenceCounter;
-            return true;
+            Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Failed to find sync pattern in buffer");
+            Log().Error("  Buffer size: {0} samples ({1} bytes)", bufferSampleCount, diskBufferSizeInBytes);
+            Log().Error("  Search limit: {0} samples", searchLimit);
+            sequenceState = SequenceState::Failed;
+            return false;
         }
     }
 
@@ -1081,120 +1171,151 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
         size_t samplesLeftInFrame = SAMPLES_PER_FRAME - audioFrameOffset;
         size_t samplesToProcess = std::min(samplesLeftInBuffer, samplesLeftInFrame);
         
-        // If we're at the start of a frame (offset 0), validate sync pattern and sequence number
+        // If we're at the start of a frame (offset 0), validate sync pattern and extract audio
         if (audioFrameOffset == 0)
         {
-            // Validate sync pattern - must be present at start of every frame
-            if (samplesLeftInBuffer >= 30)
+            // Validate 192-bit sync pattern - must be present at start of every frame
+            if (samplesLeftInBuffer >= COUNTER_START + COUNTER_SAMPLES_PER_VALUE)
             {
-                uint64_t syncLow = ExtractSyncPattern(diskBuffer, sampleIndex * 2);
-                uint64_t syncHigh = ExtractSyncPattern(diskBuffer, (sampleIndex + 8) * 2);
-                if (!(syncLow == AUDIO_SYNC_PATTERN_LOW48 && syncHigh == AUDIO_SYNC_PATTERN_HIGH48))
+                bool syncValid = true;
+                for (size_t chunk = 0; chunk < 4 && syncValid; chunk++)
                 {
-                    Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Audio sync lost at sample {0}",
+                    uint64_t extracted = ExtractSyncPattern(diskBuffer, (sampleIndex + chunk * 8) * 2);
+                    if (extracted != SYNC_PATTERN[chunk])
+                    {
+                        syncValid = false;
+                    }
+                }
+                
+                if (!syncValid)
+                {
+                    Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Sync pattern lost at sample {0}",
                         sampleIndex);
                     sequenceState = SequenceState::Failed;
                     return false;
                 }
-                
-                // // Validate sequence number once per frame (check sample 14)
-                // size_t seqSampleOffset = sampleIndex + 14;
-                // if (seqSampleOffset < bufferSampleCount)
-                // {
-                //     uint32_t expectedSeq = sequenceCounter >> COUNTER_SHIFT;
-                //     uint32_t actualSeq = (uint32_t)(diskBuffer[seqSampleOffset * 2 + 1] >> 2);
-                    
-                //     if (actualSeq != expectedSeq)
-                //     {
-                //         Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Sequence number mismatch at frame starting at sample {0}! Expecting {1} but got {2}",
-                //             sampleIndex, expectedSeq, actualSeq);
-                //         sequenceState = SequenceState::Failed;
-                //         savedSequenceCounter = sequenceCounter;
-                //         return false;
-                //     }
-                // }
             }
             
-            // Extract audio data (samples 8-11 of the frame)
-            if (samplesLeftInBuffer >= 30)
+            // Extract audio data from frame (only if the audio source is enabled)
+            if (samplesLeftInBuffer >= COUNTER_START + COUNTER_SAMPLES_PER_VALUE)
             {
-                // ADC128 12-bit audio now at samples 16..19
-                size_t adc128Offset = sampleIndex + 16;
-                uint16_t audioLeftUnsigned = Extract12BitAudio(diskBuffer, adc128Offset * 2, 0);
-                uint16_t audioRightUnsigned = Extract12BitAudio(diskBuffer, adc128Offset * 2, 2);
-                
-                // DEBUG: Log first few samples to see what we're actually getting
-                static int debugCount = 0;
-                if (debugCount < 10) {
-                    //Log().Info("DEBUG: Raw audio values: L={0} (0x{1:X}), R={2} (0x{3:X})", 
-                    //    audioLeftUnsigned, audioLeftUnsigned, audioRightUnsigned, audioRightUnsigned);
-                    debugCount++;
+                // ADC128 12-bit audio at samples 32-35 (only extract if needed)
+                if (captureAudioSource == AudioSource::Adc128s022 || captureAudioSource == AudioSource::Both)
+                {
+                    size_t adc128Offset = sampleIndex + ADC128_START;
+                    uint16_t audioLeftUnsigned = Extract12BitAudio(diskBuffer, adc128Offset * 2, 0);
+                    uint16_t audioRightUnsigned = Extract12BitAudio(diskBuffer, adc128Offset * 2, 2);
+                    
+                    // Convert from unsigned (0-4095) to signed, centered at 2048
+                    int16_t audioLeft = (int16_t)audioLeftUnsigned - 2048;
+                    int16_t audioRight = (int16_t)audioRightUnsigned - 2048;
+                    
+                    // Store audio samples in buffer
+                    audioLeftBuffer.push_back(audioLeft);
+                    audioRightBuffer.push_back(audioRight);
+                    
+                    // Update audio statistics (only if ADC128s022 is the sole source, or if Both and PCM1802 isn't preferred)
+                    if (captureAudioSource == AudioSource::Adc128s022)
+                    {
+                        // For 12-bit audio: min is -2048, max is +2047
+                        const int32_t minPossible = -2048;
+                        const int32_t maxPossible = 2047;
+                        
+                        audioRecentMinSampleValue = std::min(audioRecentMinSampleValue.load(), (int32_t)audioLeft);
+                        audioRecentMinSampleValue = std::min(audioRecentMinSampleValue.load(), (int32_t)audioRight);
+                        audioRecentMaxSampleValue = std::max(audioRecentMaxSampleValue.load(), (int32_t)audioLeft);
+                        audioRecentMaxSampleValue = std::max(audioRecentMaxSampleValue.load(), (int32_t)audioRight);
+                        
+                        audioMinSampleValue = std::min(audioMinSampleValue.load(), (int32_t)audioLeft);
+                        audioMinSampleValue = std::min(audioMinSampleValue.load(), (int32_t)audioRight);
+                        audioMaxSampleValue = std::max(audioMaxSampleValue.load(), (int32_t)audioLeft);
+                        audioMaxSampleValue = std::max(audioMaxSampleValue.load(), (int32_t)audioRight);
+                        
+                        if (audioLeft == minPossible) ++audioClippedMinSampleCount;
+                        if (audioRight == minPossible) ++audioClippedMinSampleCount;
+                        if (audioLeft == maxPossible) ++audioClippedMaxSampleCount;
+                        if (audioRight == maxPossible) ++audioClippedMaxSampleCount;
+                        
+                        if (audioLeft == minPossible) ++audioRecentClippedMinSampleCount;
+                        if (audioRight == minPossible) ++audioRecentClippedMinSampleCount;
+                        if (audioLeft == maxPossible) ++audioRecentClippedMaxSampleCount;
+                        if (audioRight == maxPossible) ++audioRecentClippedMaxSampleCount;
+                    }
                 }
-                
-                // Convert from unsigned (0-4095) to signed, centered at 2048
-                int16_t audioLeft = (int16_t)audioLeftUnsigned - 2048;
-                int16_t audioRight = (int16_t)audioRightUnsigned - 2048;
-                
-                // Store audio samples in buffer
-                audioLeftBuffer.push_back(audioLeft);
-                audioRightBuffer.push_back(audioRight);
 
-                // PCM1802 24-bit at samples 22..25 (left) and 26..29 (right)
-                uint32_t pcmLeft = Extract24BitTop6x4(diskBuffer, (sampleIndex + 22) * 2);
-                uint32_t pcmRight = Extract24BitTop6x4(diskBuffer, (sampleIndex + 26) * 2);
-                
-                // DEBUG: Extensive logging
-                static int pcm_debug3 = 0;
-                if (pcm_debug3 < 10) {
-                    size_t offL = (sampleIndex + 22) * 2;
-                    size_t offR = (sampleIndex + 26) * 2;
+                // PCM1802 24-bit at samples 38-41 (left) and 42-45 (right) (only extract if needed)
+                if (captureAudioSource == AudioSource::Pcm1802 || captureAudioSource == AudioSource::Both)
+                {
+                    uint32_t pcmLeft = Extract24BitTop6x4(diskBuffer, (sampleIndex + PCM1802_START) * 2);
+                    uint32_t pcmRight = Extract24BitTop6x4(diskBuffer, (sampleIndex + PCM1802_START + 4) * 2);
                     
-                    // Left channel raw bytes
-                    uint8_t L_byte0 = diskBuffer[offL + 0];
-                    uint8_t L_byte1 = diskBuffer[offL + 1];
-                    uint8_t L_byte2 = diskBuffer[offL + 2];
-                    uint8_t L_byte3 = diskBuffer[offL + 3];
-                    uint8_t L_byte4 = diskBuffer[offL + 4];
-                    uint8_t L_byte5 = diskBuffer[offL + 5];
-                    uint8_t L_byte6 = diskBuffer[offL + 6];
-                    uint8_t L_byte7 = diskBuffer[offL + 7];
+                    // Mask to ensure we only have 24 bits
+                    pcmLeft &= 0xFFFFFF;
+                    pcmRight &= 0xFFFFFF;
                     
-                    // Left channel 6-bit extractions
-                    uint8_t L_s0 = (L_byte1 >> 2) & 0x3F;
-                    uint8_t L_s1 = (L_byte3 >> 2) & 0x3F;
-                    uint8_t L_s2 = (L_byte5 >> 2) & 0x3F;
-                    uint8_t L_s3 = (L_byte7 >> 2) & 0x3F;
+                    // PCM1802 outputs 24-bit two's-complement. Sign-extend bit 23.
+                    int32_t pcmLeftSigned = (pcmLeft & 0x800000) ? (int32_t)(pcmLeft | 0xFF000000) : (int32_t)pcmLeft;
+                    int32_t pcmRightSigned = (pcmRight & 0x800000) ? (int32_t)(pcmRight | 0xFF000000) : (int32_t)pcmRight;
                     
-                    // Right channel 6-bit extractions
-                    uint8_t R_s0 = (diskBuffer[offR + 1] >> 2) & 0x3F;
-                    uint8_t R_s1 = (diskBuffer[offR + 3] >> 2) & 0x3F;
-                    uint8_t R_s2 = (diskBuffer[offR + 5] >> 2) & 0x3F;
-                    uint8_t R_s3 = (diskBuffer[offR + 7] >> 2) & 0x3F;
+                    audio24LeftBuffer.push_back(pcmLeftSigned);
+                    audio24RightBuffer.push_back(pcmRightSigned);
                     
-                    Log().Info("=== PCM DEBUG Frame {0} ===", pcm_debug3);
-                    Log().Info("Left raw bytes: [{0:02X} {1:02X}] [{2:02X} {3:02X}] [{4:02X} {5:02X}] [{6:02X} {7:02X}]",
-                        L_byte0, L_byte1, L_byte2, L_byte3, L_byte4, L_byte5, L_byte6, L_byte7);
-                    Log().Info("Left 6-bit: s0=0x{0:02X}({0}) s1=0x{1:02X}({1}) s2=0x{2:02X}({2}) s3=0x{3:02X}({3})",
-                        L_s0, L_s1, L_s2, L_s3);
-                    Log().Info("Left combined: raw=0x{0:X} masked=0x{1:X}", pcmLeft, pcmLeft & 0xFFFFFF);
-                    
-                    Log().Info("Right 6-bit: s0=0x{0:02X}({0}) s1=0x{1:02X}({1}) s2=0x{2:02X}({2}) s3=0x{3:02X}({3})",
-                        R_s0, R_s1, R_s2, R_s3);
-                    Log().Info("Right combined: raw=0x{0:X} masked=0x{1:X}", pcmRight, pcmRight & 0xFFFFFF);
-                    
-                    pcm_debug3++;
+                    // Update audio statistics (PCM1802 is preferred when Both is enabled)
+                    if (captureAudioSource == AudioSource::Pcm1802 || captureAudioSource == AudioSource::Both)
+                    {
+                        // For 24-bit audio: min is -8388608 (0x800000), max is 8388607 (0x7FFFFF)
+                        const int32_t minPossible = -8388608;
+                        const int32_t maxPossible = 8388607;
+                        
+                        audioRecentMinSampleValue = std::min(audioRecentMinSampleValue.load(), pcmLeftSigned);
+                        audioRecentMinSampleValue = std::min(audioRecentMinSampleValue.load(), pcmRightSigned);
+                        audioRecentMaxSampleValue = std::max(audioRecentMaxSampleValue.load(), pcmLeftSigned);
+                        audioRecentMaxSampleValue = std::max(audioRecentMaxSampleValue.load(), pcmRightSigned);
+                        
+                        audioMinSampleValue = std::min(audioMinSampleValue.load(), pcmLeftSigned);
+                        audioMinSampleValue = std::min(audioMinSampleValue.load(), pcmRightSigned);
+                        audioMaxSampleValue = std::max(audioMaxSampleValue.load(), pcmLeftSigned);
+                        audioMaxSampleValue = std::max(audioMaxSampleValue.load(), pcmRightSigned);
+                        
+                        if (pcmLeftSigned == minPossible) ++audioClippedMinSampleCount;
+                        if (pcmRightSigned == minPossible) ++audioClippedMinSampleCount;
+                        if (pcmLeftSigned == maxPossible) ++audioClippedMaxSampleCount;
+                        if (pcmRightSigned == maxPossible) ++audioClippedMaxSampleCount;
+                        
+                        if (pcmLeftSigned == minPossible) ++audioRecentClippedMinSampleCount;
+                        if (pcmRightSigned == minPossible) ++audioRecentClippedMinSampleCount;
+                        if (pcmLeftSigned == maxPossible) ++audioRecentClippedMaxSampleCount;
+                        if (pcmRightSigned == maxPossible) ++audioRecentClippedMaxSampleCount;
+                    }
                 }
-                
-                // Mask to ensure we only have 24 bits
-                pcmLeft &= 0xFFFFFF;
-                pcmRight &= 0xFFFFFF;
-                
-                // PCM1802 outputs 24-bit two's-complement. Sign-extend bit 23.
-                int32_t pcmLeftSigned = (pcmLeft & 0x800000) ? (int32_t)(pcmLeft | 0xFF000000) : (int32_t)pcmLeft;
-                int32_t pcmRightSigned = (pcmRight & 0x800000) ? (int32_t)(pcmRight | 0xFF000000) : (int32_t)pcmRight;
-                
-                audio24LeftBuffer.push_back(pcmLeftSigned);
-                audio24RightBuffer.push_back(pcmRightSigned);
+            }
+        }
+        
+        // Verify counter values in counter region (samples 48-511 of each frame)
+        // Counter increments every 8 samples, so verify at the start of each 8-sample block
+        if (audioFrameOffset >= COUNTER_START && audioFrameOffset < SAMPLES_PER_FRAME)
+        {
+            size_t offsetInCounterRegion = audioFrameOffset - COUNTER_START;
+            
+            // Check if we're at the start of an 8-sample counter block
+            if ((offsetInCounterRegion % COUNTER_SAMPLES_PER_VALUE) == 0)
+            {
+                // Verify we have enough samples left in buffer
+                if (samplesLeftInBuffer >= COUNTER_SAMPLES_PER_VALUE)
+                {
+                    uint64_t actualCounter = Extract48BitCounter(diskBuffer, sampleIndex * 2);
+                    
+                    if (actualCounter != expectedCounter)
+                    {
+                        Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Counter mismatch at sample {0} (frame offset {1})! Expected 0x{2:X} but got 0x{3:X}",
+                            sampleIndex, audioFrameOffset, expectedCounter, actualCounter);
+                        sequenceState = SequenceState::Failed;
+                        return false;
+                    }
+                    
+                    // Counter is valid, increment expected value for next block
+                    expectedCounter++;
+                }
             }
         }
         
@@ -1222,14 +1343,6 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
             }
         }
         
-        // Advance sequence counter for ALL samples processed (not just sequence number samples)
-        // The sequence counter tracks absolute position in the 4,128,768 sample cycle
-        sequenceCounter += static_cast<uint32_t>(samplesToProcess);
-        if (sequenceCounter >= (COUNTER_MAX << COUNTER_SHIFT))
-        {
-            sequenceCounter = sequenceCounter % (COUNTER_MAX << COUNTER_SHIFT);
-        }
-        
         sampleIndex += samplesToProcess;
         audioFrameOffset += samplesToProcess;
         processedSampleCount += samplesToProcess;
@@ -1241,8 +1354,8 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
         }
     }
 
-    // Write audio buffers to WAV files if we have data
-    if (!audioLeftBuffer.empty())
+    // Write audio buffers to WAV files if we have data and the corresponding audio source is enabled
+    if (!audioLeftBuffer.empty() && (captureAudioSource == AudioSource::Adc128s022 || captureAudioSource == AudioSource::Both))
     {
         if (!WriteAudioFramesToWav(audioLeftBuffer, audioRightBuffer))
         {
@@ -1250,8 +1363,22 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
             return false;
         }
         audioFrameCount += audioLeftBuffer.size();
+        
+        // Calculate amplitude (RMS) for ADC128s022 if it's the sole source
+        if (captureAudioSource == AudioSource::Adc128s022)
+        {
+            double sumSquares = 0.0;
+            for (size_t i = 0; i < audioLeftBuffer.size(); i++)
+            {
+                sumSquares += (double)audioLeftBuffer[i] * (double)audioLeftBuffer[i];
+                sumSquares += (double)audioRightBuffer[i] * (double)audioRightBuffer[i];
+            }
+            double rms = std::sqrt(sumSquares / (audioLeftBuffer.size() * 2));
+            // Normalize to -1 to +1 range (12-bit max is 2047)
+            audioMeanAmplitude = rms / 2047.0;
+        }
     }
-    if (!audio24LeftBuffer.empty())
+    if (!audio24LeftBuffer.empty() && (captureAudioSource == AudioSource::Pcm1802 || captureAudioSource == AudioSource::Both))
     {
         if (!WriteAudio24FramesToWav(audio24LeftBuffer, audio24RightBuffer))
         {
@@ -1259,10 +1386,24 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
             return false;
         }
         audio24FrameCount += audio24LeftBuffer.size();
+        
+        // Calculate amplitude (RMS) for PCM1802 (preferred when Both is enabled)
+        if (captureAudioSource == AudioSource::Pcm1802 || captureAudioSource == AudioSource::Both)
+        {
+            double sumSquares = 0.0;
+            for (size_t i = 0; i < audio24LeftBuffer.size(); i++)
+            {
+                sumSquares += (double)audio24LeftBuffer[i] * (double)audio24LeftBuffer[i];
+                sumSquares += (double)audio24RightBuffer[i] * (double)audio24RightBuffer[i];
+            }
+            double rms = std::sqrt(sumSquares / (audio24LeftBuffer.size() * 2));
+            // Normalize to -1 to +1 range (24-bit max is 8388607)
+            audioMeanAmplitude = rms / 8388607.0;
+        }
     }
 
-    // Save the resulting sequence counter so we can continue checking from the same position in the next buffer
-    savedSequenceCounter = sequenceCounter;
+    // Save the expected counter value for the next buffer
+    savedSequenceCounter = expectedCounter;
     return true;
 }
 
@@ -1430,6 +1571,18 @@ uint32_t UsbDeviceBase::Extract24BitTop6x4(uint8_t* buffer, size_t byteOffset) c
     uint8_t s2 = (buffer[byteOffset + 5] >> 2) & 0x3F;
     uint8_t s3 = (buffer[byteOffset + 7] >> 2) & 0x3F;
     return ((uint32_t)s0 << 18) | ((uint32_t)s1 << 12) | ((uint32_t)s2 << 6) | (uint32_t)s3;
+}
+
+// Extract 48-bit counter value from 8 consecutive samples (6 bits per sample from top 6 bits)
+uint64_t UsbDeviceBase::Extract48BitCounter(uint8_t* buffer, size_t byteOffset) const
+{
+    uint64_t counter = 0;
+    for (size_t i = 0; i < 8; i++) {
+        size_t offset = byteOffset + i * 2;
+        uint8_t bits6 = (buffer[offset + 1] >> 2) & 0x3F;
+        counter |= ((uint64_t)bits6 << (i * 6));
+    }
+    return counter;
 }
 
 // Write audio frames to WAV file

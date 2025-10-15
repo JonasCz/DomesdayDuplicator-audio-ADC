@@ -28,7 +28,7 @@
 #include "configuration.h"
 
 // This define should be incremented if the settings file format changes
-#define SETTINGSVERSION 4
+#define SETTINGSVERSION 5
 
 Configuration::Configuration(QObject *parent) : QObject(parent)
 {
@@ -63,6 +63,7 @@ void Configuration::writeConfiguration()
     configuration->beginGroup("capture");
     configuration->setValue("captureDirectory", settings.capture.captureDirectory);
     configuration->setValue("captureFormat", convertCaptureFormatToInt(settings.capture.captureFormat));
+    configuration->setValue("audioSource", convertAudioSourceToInt(settings.capture.audioSource));
     configuration->endGroup();
 
     // UI
@@ -117,6 +118,7 @@ void Configuration::readConfiguration()
     configuration->beginGroup("capture");
     settings.capture.captureDirectory = configuration->value("captureDirectory").toString();
     settings.capture.captureFormat = convertIntToCaptureFormat(configuration->value("captureFormat").toInt());
+    settings.capture.audioSource = convertIntToAudioSource(configuration->value("audioSource").toInt());
     configuration->endGroup();
 
     // UI
@@ -165,6 +167,7 @@ void Configuration::setDefault()
     // Capture
     settings.capture.captureDirectory = QDir::homePath();
     settings.capture.captureFormat = CaptureFormat::tenBitPacked;
+    settings.capture.audioSource = AudioSource::none;
 
     // UI
     settings.ui.perSideNotesEnabled = false;
@@ -249,6 +252,30 @@ Configuration::SerialSpeeds Configuration::convertIntToSerialSpeeds(qint32 seria
 
     // Default to auto detect
     return SerialSpeeds::autoDetect;
+}
+
+// Enum conversion from AudioSource to int
+qint32 Configuration::convertAudioSourceToInt(AudioSource audioSource)
+{
+    if (audioSource == AudioSource::none) return 0;
+    if (audioSource == AudioSource::pcm1802) return 1;
+    if (audioSource == AudioSource::adc128s022) return 2;
+    if (audioSource == AudioSource::both) return 3;
+
+    // Default to none
+    return 0;
+}
+
+// Enum conversion from int to AudioSource
+Configuration::AudioSource Configuration::convertIntToAudioSource(qint32 audioInt)
+{
+    if (audioInt == 0) return AudioSource::none;
+    if (audioInt == 1) return AudioSource::pcm1802;
+    if (audioInt == 2) return AudioSource::adc128s022;
+    if (audioInt == 3) return AudioSource::both;
+
+    // Default to none
+    return AudioSource::none;
 }
 
 // Functions to get and set configuration values ----------------------------------------------------------------------
@@ -435,6 +462,16 @@ void Configuration::setShowAdvancedCaptureStats(bool enabled)
 bool Configuration::getShowAdvancedCaptureStats() const
 {
     return settings.ui.showAdvancedCaptureStats;
+}
+
+void Configuration::setAudioSource(AudioSource audioSource)
+{
+    settings.capture.audioSource = audioSource;
+}
+
+Configuration::AudioSource Configuration::getAudioSource() const
+{
+    return settings.capture.audioSource;
 }
 
 // Windows

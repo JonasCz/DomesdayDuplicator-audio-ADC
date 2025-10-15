@@ -54,6 +54,14 @@ public:
         autoDetect,
     };
 
+    // Define the possible audio sources
+    enum AudioSource {
+        none,
+        pcm1802,
+        adc128s022,
+        both
+    };
+
     explicit Configuration(QObject *parent = nullptr);
 
     void writeConfiguration();
@@ -98,6 +106,8 @@ public:
     bool getAmplitudeChartEnabled() const;
     void setShowAdvancedCaptureStats(bool enabled);
     bool getShowAdvancedCaptureStats() const;
+    void setAudioSource(AudioSource audioSource);
+    AudioSource getAudioSource() const;
 
     void setMainWindowGeometry(QByteArray mainWindowGeometry);
     QByteArray getMainWindowGeometry() const;
@@ -122,6 +132,7 @@ private:
     struct Capture {
         QString captureDirectory;
         CaptureFormat captureFormat;
+        AudioSource audioSource;
     };
 
     struct Usb {
@@ -171,4 +182,7 @@ private:
     CaptureFormat convertIntToCaptureFormat(qint32 captureInt);
     qint32 convertSerialSpeedsToInt(SerialSpeeds serialSpeeds);
     SerialSpeeds convertIntToSerialSpeeds(qint32 serialInt);
+    qint32 convertAudioSourceToInt(AudioSource audioSource);
+    AudioSource convertIntToAudioSource(qint32 audioInt);
 };
+

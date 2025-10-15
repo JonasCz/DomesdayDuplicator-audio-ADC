@@ -24,6 +24,13 @@ public:
         Unsigned10Bit,
         Unsigned10Bit4to1Decimation,
     };
+    enum class AudioSource
+    {
+        None,
+        Pcm1802,
+        Adc128s022,
+        Both,
+    };
     enum class TransferResult
     {
         Running,
@@ -52,7 +59,7 @@ public:
     void SendConfigurationCommand(const std::string& preferredDevicePath, bool testMode);
 
     // Capture methods
-    bool StartCapture(const std::filesystem::path& filePath, CaptureFormat format, const std::string& preferredDevicePath, bool isTestMode, bool useSmallUsbTransfers, bool useAsyncFileIo, size_t usbTransferQueueSizeInBytes, size_t diskBufferQueueSizeInBytes);
+    bool StartCapture(const std::filesystem::path& filePath, CaptureFormat format, AudioSource audioSource, const std::string& preferredDevicePath, bool isTestMode, bool useSmallUsbTransfers, bool useAsyncFileIo, size_t usbTransferQueueSizeInBytes, size_t diskBufferQueueSizeInBytes);
     void StopCapture();
     bool GetTransferInProgress() const;
     TransferResult GetTransferResult() const;
@@ -75,6 +82,17 @@ public:
     size_t GetAudioFileSizeWrittenInBytes() const;
     size_t GetAudio24FrameCount() const;
     size_t GetAudio24FileSizeWrittenInBytes() const;
+    
+    // Audio statistics methods
+    int32_t GetAudioMinSampleValue() const;
+    int32_t GetAudioMaxSampleValue() const;
+    size_t GetAudioClippedMinSampleCount() const;
+    size_t GetAudioClippedMaxSampleCount() const;
+    int32_t GetAudioRecentMinSampleValue() const;
+    int32_t GetAudioRecentMaxSampleValue() const;
+    size_t GetAudioRecentClippedMinSampleCount() const;
+    size_t GetAudioRecentClippedMaxSampleCount() const;
+    double GetAudioMeanAmplitude() const;
 
     // Buffer sampling methods
     void QueueBufferSampleRequest(size_t requestedSampleLengthInBytes);
@@ -162,6 +180,7 @@ private:
 
     // Audio processing methods
     uint64_t ExtractSyncPattern(uint8_t* buffer, size_t byteOffset) const;
+    uint64_t Extract48BitCounter(uint8_t* buffer, size_t byteOffset) const;
     uint16_t Extract12BitAudio(uint8_t* buffer, size_t byteOffset, size_t sampleIndex) const;
     bool WriteAudioFramesToWav(const std::vector<int16_t>& leftSamples, const std::vector<int16_t>& rightSamples);
     bool FinalizeAudioWavFile();
@@ -180,6 +199,7 @@ private:
     // Capture settings
     std::filesystem::path captureFilePath;
     CaptureFormat captureFormat;
+    AudioSource captureAudioSource = AudioSource::None;
     bool captureIsTestMode = false;
     size_t currentUsbTransferQueueSizeInBytes = 0;
     bool currentUseSmallUsbTransfers = false;
@@ -246,10 +266,21 @@ private:
     std::vector<int32_t> audio24RightBuffer;
     std::atomic<size_t> audio24FrameCount = 0;
     std::atomic<size_t> audio24FileSizeWrittenInBytes = 0;
+    
+    // Audio statistics (uses PCM1802 when both are enabled, otherwise whichever is enabled)
+    std::atomic<int32_t> audioMinSampleValue = 0;
+    std::atomic<int32_t> audioMaxSampleValue = 0;
+    std::atomic<size_t> audioClippedMinSampleCount = 0;
+    std::atomic<size_t> audioClippedMaxSampleCount = 0;
+    std::atomic<int32_t> audioRecentMinSampleValue = 0;
+    std::atomic<int32_t> audioRecentMaxSampleValue = 0;
+    std::atomic<size_t> audioRecentClippedMinSampleCount = 0;
+    std::atomic<size_t> audioRecentClippedMaxSampleCount = 0;
+    std::atomic<double> audioMeanAmplitude = 0.0;
 
     // Sequence/test data state
     SequenceState sequenceState = SequenceState::Sync;
-    uint32_t savedSequenceCounter = 0;
+    uint64_t savedSequenceCounter = 0;  // 48-bit counter value
     std::optional<uint16_t> expectedNextTestDataValue;
     std::optional<uint16_t> testDataMax;
 

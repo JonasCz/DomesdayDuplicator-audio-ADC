@@ -23,7 +23,7 @@ if /i not "%confirm%"=="y" (
 )
 
 REM Check if .sof file exists
-if not exist "output_files\DomesdayDuplicator.sof" (
+if not exist "DomesdayDuplicator.sof" (
     echo ERROR: DomesdayDuplicator.sof not found
     echo Please run build.bat first
     exit /b 1

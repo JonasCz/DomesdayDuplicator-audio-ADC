@@ -55,6 +55,13 @@ ConfigurationDialog::ConfigurationDialog(QWidget *parent) :
     ui->serialSpeedComboBox->addItem("2400", Configuration::SerialSpeeds::bps2400);
     ui->serialSpeedComboBox->addItem("1200", Configuration::SerialSpeeds::bps1200);
 
+    // Build the audioSourceComboBox
+    ui->audioSourceComboBox->clear();
+    ui->audioSourceComboBox->addItem("None", Configuration::AudioSource::none);
+    ui->audioSourceComboBox->addItem("PCM1802 (external ADC, 24-bit stereo)", Configuration::AudioSource::pcm1802);
+    ui->audioSourceComboBox->addItem("ADC128s022 (integrated ADC, 12-bit stereo)", Configuration::AudioSource::adc128s022);
+    ui->audioSourceComboBox->addItem("Both", Configuration::AudioSource::both);
+
     // If we're running on Linux, disable Windows-specific options.
 #ifndef _WIN32
     ui->useWinUsb->setChecked(false);
@@ -86,6 +93,7 @@ void ConfigurationDialog::loadConfiguration(const Configuration& configuration)
     // Capture
     ui->captureDirectoryLineEdit->setText(configuration.getCaptureDirectory());
     ui->captureFormatComboBox->setCurrentIndex(ui->captureFormatComboBox->findData(static_cast<unsigned int>(configuration.getCaptureFormat())));
+    ui->audioSourceComboBox->setCurrentIndex(ui->audioSourceComboBox->findData(static_cast<unsigned int>(configuration.getAudioSource())));
 
     // USB
     ui->vendorIdLineEdit->setText(QString::number(configuration.getUsbVid()));
@@ -151,6 +159,7 @@ void ConfigurationDialog::saveConfiguration(Configuration& configuration)
     // Capture
     configuration.setCaptureDirectory(ui->captureDirectoryLineEdit->text());
     configuration.setCaptureFormat(static_cast<Configuration::CaptureFormat>(ui->captureFormatComboBox->itemData(ui->captureFormatComboBox->currentIndex()).toInt()));
+    configuration.setAudioSource(static_cast<Configuration::AudioSource>(ui->audioSourceComboBox->itemData(ui->audioSourceComboBox->currentIndex()).toInt()));
 
     // USB
     configuration.setUsbVid(static_cast<quint16>(ui->vendorIdLineEdit->text().toInt()));

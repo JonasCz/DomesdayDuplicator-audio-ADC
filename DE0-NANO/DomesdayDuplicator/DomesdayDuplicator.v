@@ -30,13 +30,13 @@ module DomesdayDuplicator(
 	inout [33:0] GPIO1,
 	output [7:0] LED,
 	
-	// ADC128S022 Audio ADC pins (directly connected on DE0-Nano)
+	// ADC128S022 Audio ADC pins (de0-nano integrated)
 	output       ADC_CS_N,
 	output       ADC_SCLK,
 	output       ADC_SADDR,
 	input        ADC_SDAT,
 
-	// JP3 header (subset used): map PCM1802 here
+	// JP3 header: PCM1802
 	output       GPIO_23,   // JP3 pin 8
 	output       GPIO_25,   // JP3 pin 10
 	output       GPIO_20,   // JP3 pin 5

@@ -83,6 +83,7 @@ private slots:
     void updateStorageInformation();
     void updateAmplitudeDataBuffer();
     void updateAmplitudeLabel();
+    void updateAudioAmplitudeLabel();
 
     void on_actionExit_triggered();
     void on_actionTest_mode_toggled(bool arg1);

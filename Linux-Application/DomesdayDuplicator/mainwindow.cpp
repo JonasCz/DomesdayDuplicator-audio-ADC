@@ -227,6 +227,37 @@ void MainWindow::RefreshControlVisibility()
     ui->recentMaxValueLabel->setVisible(showAdvancedCaptureStats);
     ui->recentMaxValueClippedPreLabel->setVisible(showAdvancedCaptureStats);
     ui->recentMaxValueClippedLabel->setVisible(showAdvancedCaptureStats);
+    
+    // Update audio statistics visibility and title
+    auto audioSource = configuration->getAudioSource();
+    bool showAudioStats = (audioSource != Configuration::AudioSource::none);
+    ui->captureStatsGroupBox_2->setVisible(showAudioStats);
+    
+    if (showAudioStats)
+    {
+        // Set the title based on the audio source
+        QString audioTitle;
+        if (audioSource == Configuration::AudioSource::pcm1802)
+        {
+            audioTitle = tr("Capture statistics (PCM1802):");
+        }
+        else if (audioSource == Configuration::AudioSource::adc128s022)
+        {
+            audioTitle = tr("Capture statistics (ADC128s022):");
+        }
+        else if (audioSource == Configuration::AudioSource::both)
+        {
+            // Show PCM1802 stats when both are enabled
+            audioTitle = tr("Capture statistics (PCM1802):");
+        }
+        ui->captureStatsGroupBox_2->setTitle(audioTitle);
+        
+        // Hide redundant duration and transfers labels
+        ui->durationPreLabel_2->setVisible(false);
+        ui->durationLabel_2->setVisible(false);
+        ui->numberOfTransfersPreLabel_2->setVisible(false);
+        ui->numberOfTransfersLabel_2->setVisible(false);
+    }
 }
 
 // Signal handlers ----------------------------------------------------------------------------------------------------
@@ -524,6 +555,37 @@ void MainWindow::updateCaptureStatus()
     ui->recentMaxValueLabel->setText(std::to_string(usbDevice->GetRecentMaxSampleValue()).c_str());
     ui->recentMinValueClippedLabel->setText(std::to_string(usbDevice->GetRecentClippedMinSampleCount()).c_str());
     ui->recentMaxValueClippedLabel->setText(std::to_string(usbDevice->GetRecentClippedMaxSampleCount()).c_str());
+    
+    // Update audio statistics
+    auto audioSource = configuration->getAudioSource();
+    if (audioSource != Configuration::AudioSource::none)
+    {
+        // Determine which audio file size to display
+        size_t audioMbWritten = 0;
+        size_t audioSampleCount = 0;
+        if (audioSource == Configuration::AudioSource::pcm1802 || audioSource == Configuration::AudioSource::both)
+        {
+            audioMbWritten = usbDevice->GetAudio24FileSizeWrittenInBytes() / (1024 * 1024);
+            audioSampleCount = usbDevice->GetAudio24FrameCount();
+        }
+        else if (audioSource == Configuration::AudioSource::adc128s022)
+        {
+            audioMbWritten = usbDevice->GetAudioFileSizeWrittenInBytes() / (1024 * 1024);
+            audioSampleCount = usbDevice->GetAudioFrameCount();
+        }
+        
+        ui->dataCapturedLabel_2->setText(QString::number(audioMbWritten) + (tr(" MiB")));
+        ui->sampleCountLabel_2->setText(std::to_string(audioSampleCount).c_str());
+        ui->minValueLabel_2->setText(std::to_string(usbDevice->GetAudioMinSampleValue()).c_str());
+        ui->maxValueLabel_2->setText(std::to_string(usbDevice->GetAudioMaxSampleValue()).c_str());
+        ui->minValueClippedLabel_2->setText(std::to_string(usbDevice->GetAudioClippedMinSampleCount()).c_str());
+        ui->maxValueClippedLabel_2->setText(std::to_string(usbDevice->GetAudioClippedMaxSampleCount()).c_str());
+        ui->recentMinValueLabel_2->setText(std::to_string(usbDevice->GetAudioRecentMinSampleValue()).c_str());
+        ui->recentMaxValueLabel_2->setText(std::to_string(usbDevice->GetAudioRecentMaxSampleValue()).c_str());
+        ui->recentMinValueClippedLabel_2->setText(std::to_string(usbDevice->GetAudioRecentClippedMinSampleCount()).c_str());
+        ui->recentMaxValueClippedLabel_2->setText(std::to_string(usbDevice->GetAudioRecentClippedMaxSampleCount()).c_str());
+        ui->meanAmplitudeLabel_2->setText(QString::number(usbDevice->GetAudioMeanAmplitude(), 'f', 3));
+    }
 
     // If the capture process was requeted to stop and has now in fact stopped, perform our final tasks for this capture
     // and return the UI state to normal.
@@ -1281,8 +1343,9 @@ void MainWindow::StartCapture()
     qDebug() << "MainWindow::StartCapture(): Setting device's test mode flag to" << isTestMode;
     usbDevice->SendConfigurationCommand(configuration->getUsbPreferredDevice().toStdString(), isTestMode);
 
-    // Reset the amplitude buffer
+    // Reset the amplitude buffers
     ui->am->clearBuffer();
+    ui->am_2->clearBuffer();
 
     // Use the advanced naming dialogue to generate the capture file name
     captureFilePath = std::filesystem::path((char8_t const*)configuration->getCaptureDirectory().toUtf8().data());
@@ -1401,6 +1464,28 @@ void MainWindow::StartCapture()
         captureFormat = UsbDeviceBase::CaptureFormat::Signed16Bit;
     }
 
+    // Determine the audio source
+    UsbDeviceBase::AudioSource audioSource = UsbDeviceBase::AudioSource::None;
+    if (configuration->getAudioSource() == Configuration::AudioSource::none)
+    {
+        audioSource = UsbDeviceBase::AudioSource::None;
+    }
+    else if (configuration->getAudioSource() == Configuration::AudioSource::pcm1802)
+    {
+        qDebug() << "MainWindow::StartCapture(): Audio source - PCM1802 (external ADC)";
+        audioSource = UsbDeviceBase::AudioSource::Pcm1802;
+    }
+    else if (configuration->getAudioSource() == Configuration::AudioSource::adc128s022)
+    {
+        qDebug() << "MainWindow::StartCapture(): Audio source - ADC128s022 (integrated ADC)";
+        audioSource = UsbDeviceBase::AudioSource::Adc128s022;
+    }
+    else if (configuration->getAudioSource() == Configuration::AudioSource::both)
+    {
+        qDebug() << "MainWindow::StartCapture(): Audio source - Both ADCs";
+        audioSource = UsbDeviceBase::AudioSource::Both;
+    }
+
     // Initialize our transfer state settings
     playerStopRequested = false;
 
@@ -1416,7 +1501,7 @@ void MainWindow::StartCapture()
 
     // Attempt to start the capture process
     qDebug() << "MainWindow::StartCapture(): Starting capture to file:" << captureFilePath.string().c_str();
-    if (!usbDevice->StartCapture(captureFilePath, captureFormat, configuration->getUsbPreferredDevice().toStdString(), isTestMode, useSmallUsbTransfers, useAsyncFileIo, maxUsbTransferQueueSizeInBytes, maxDiskBufferQueueSizeInBytes))
+    if (!usbDevice->StartCapture(captureFilePath, captureFormat, audioSource, configuration->getUsbPreferredDevice().toStdString(), isTestMode, useSmallUsbTransfers, useAsyncFileIo, maxUsbTransferQueueSizeInBytes, maxDiskBufferQueueSizeInBytes))
     {
         // Show an error based on the transfer result
         qDebug() << "MainWindow::StartCapture(): Failed to begin the capture process";
@@ -1557,6 +1642,32 @@ void MainWindow::updateAmplitudeLabel()
     ui->meanAmplitudeLabel->setText(QString::number(amplitude, 'f', 3));
 }
 
+// Timer callback to update audio amplitude display
+void MainWindow::updateAudioAmplitudeLabel()
+{
+    auto audioAmplitude = usbDevice->GetAudioMeanAmplitude();
+    ui->meanAmplitudeLabel_2->setText(QString::number(audioAmplitude, 'f', 3));
+    
+    // Update the audio amplitude graph by simulating a buffer with the amplitude value
+    // We create a synthetic buffer that represents the current audio amplitude
+    if (isCaptureRunning && !isCaptureStopping)
+    {
+        // Create a small buffer with samples representing the current amplitude
+        // We'll use 16-bit signed samples scaled by the amplitude
+        std::vector<uint8_t> syntheticBuffer;
+        syntheticBuffer.resize(512);  // 256 samples
+        int16_t sampleValue = static_cast<int16_t>(audioAmplitude * 32767.0);
+        
+        for (size_t i = 0; i < syntheticBuffer.size(); i += 2)
+        {
+            syntheticBuffer[i] = sampleValue & 0xFF;
+            syntheticBuffer[i + 1] = (sampleValue >> 8) & 0xFF;
+        }
+        
+        ui->am_2->updateBuffer(syntheticBuffer);
+    }
+}
+
 // Update amplitude UI elements
 void MainWindow::updateAmplitudeUI()
 {
@@ -1583,5 +1694,19 @@ void MainWindow::updateAmplitudeUI()
     } else {
         disconnect(amplitudeTimer.get(), SIGNAL(timeout()), ui->am, SLOT(plotGraph()));
         ui->am->setVisible(false);
+    }
+    
+    // Update audio amplitude display
+    auto audioSource = configuration->getAudioSource();
+    bool audioEnabled = (audioSource != Configuration::AudioSource::none);
+    
+    if (audioEnabled && configuration->getAmplitudeChartEnabled()) {
+        ui->am_2->setVisible(true);
+        connect(amplitudeTimer.get(), SIGNAL(timeout()), this, SLOT(updateAudioAmplitudeLabel()));
+        connect(amplitudeTimer.get(), SIGNAL(timeout()), ui->am_2, SLOT(plotGraph()));
+    } else {
+        disconnect(amplitudeTimer.get(), SIGNAL(timeout()), this, SLOT(updateAudioAmplitudeLabel()));
+        disconnect(amplitudeTimer.get(), SIGNAL(timeout()), ui->am_2, SLOT(plotGraph()));
+        ui->am_2->setVisible(false);
     }
 }
