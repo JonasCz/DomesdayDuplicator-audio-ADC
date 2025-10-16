@@ -15,9 +15,9 @@ set(DomesdayDuplicator_SOURCES
     UsbDeviceBase.cpp
     UsbDeviceLibUsb.cpp
     UsbDeviceWinUsb.cpp
+    resources.rc
+    resources.qrc
 )
-
-qt_add_resources(DomesdayDuplicator_SOURCES resources.qrc)
 
 add_executable(DomesdayDuplicator WIN32 MACOSX_BUNDLE
     ${DomesdayDuplicator_SOURCES})

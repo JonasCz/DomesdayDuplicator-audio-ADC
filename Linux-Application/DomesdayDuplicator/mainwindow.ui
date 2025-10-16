@@ -7,21 +7,21 @@
     <x>0</x>
     <y>0</y>
     <width>680</width>
-    <height>800</height>
+    <height>900</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
     <width>680</width>
-    <height>800</height>
+    <height>900</height>
    </size>
   </property>
   <property name="windowTitle">
    <string>Domesday Duplicator</string>
   </property>
   <property name="windowIcon">
-   <iconset resource="resources.qrc">
-    <normaloff>:/graphics/ApplicationIcon/Graphics/ApplicationIcon/DomesdayDuplicator_128x128.png</normaloff>:/graphics/ApplicationIcon/Graphics/ApplicationIcon/DomesdayDuplicator_128x128.png</iconset>
+   <iconset>
+    <normaloff>:/graphics/ApplicationIcon/DomesdayDuplicator_128x128.png</normaloff>:/graphics/ApplicationIcon/DomesdayDuplicator_128x128.png</iconset>
   </property>
   <widget class="QWidget" name="centralWidget">
    <layout class="QVBoxLayout" name="verticalLayout">
@@ -157,7 +157,7 @@
           <string/>
          </property>
          <property name="pixmap">
-          <pixmap resource="resources.qrc">:/graphics/logo/Graphics/Domesday Duplicator logo colour 150px.png</pixmap>
+          <pixmap resource="resources.qrc">:/graphics/logo/logo_150.png</pixmap>
          </property>
          <property name="scaledContents">
           <bool>true</bool>

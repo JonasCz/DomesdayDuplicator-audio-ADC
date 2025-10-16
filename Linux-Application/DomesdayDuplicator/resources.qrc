@@ -1,7 +1,7 @@
 <RCC>
     <qresource prefix="/graphics/logo">
         <file alias="Domesday Duplicator logo">Graphics/Domesday Duplicator logo colour 250px.png</file>
-        <file>Graphics/Domesday Duplicator logo colour 150px.png</file>
+        <file alias="logo_150.png">Graphics/Domesday Duplicator logo colour 150px.png</file>
     </qresource>
     <qresource prefix="/graphics/ApplicationIcon">
         <file>Graphics/ApplicationIcon/DomesdayDuplicator_16x16.png</file>
