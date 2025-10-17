@@ -18,7 +18,7 @@ You can also use the low cost PCM1802 module. Connect with jumper wires, diagram
 
 ![PCM1802 module connection diagram](Documentation/audio-addon-board-pcm1802/pcm1802_wiring_diagram.jpg)
 
-You don't need to solder any of the fmt/mode/osr/bypass. Make sure the 3.3v on your module is working (3.3v is present), 3.3v needs to be connected to the pdw and fsy pins on the module. Connect lin/rin/gnd on the module to your audio source.
+Wires between pcm1802 and DdD should be as short as possible. You don't need to solder any of the fmt/mode/osr/bypass. Make sure the 3.3v on your module is working (3.3v is present), 3.3v needs to be connected to the pdw and fsy pins on the module. Connect lin/rin/gnd on the module to your audio source.
 
 **adc128s102**:
 
