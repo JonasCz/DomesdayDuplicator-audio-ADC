@@ -36,8 +36,9 @@ You'll need to flash the firmware of the deo-nano, using the same process as for
 
 ## Application:
 
-Set your audio source in the application settings, then start capturing. It will write a wav file in the same lication as the RF data, and show some statistics for the audio.
+Set your audio source in the application settings, then start capturing. It will write a wav file in the same location as the RF data, and show some statistics for the audio.
 
+(original readme follows)
 
 # Domesday Duplicator (DdD)
 
