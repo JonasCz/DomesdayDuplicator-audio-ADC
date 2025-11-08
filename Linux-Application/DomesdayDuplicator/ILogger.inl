@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <cassert>
 #include <cstring>
 #include <iostream>
