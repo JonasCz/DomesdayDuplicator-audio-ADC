@@ -8,7 +8,7 @@ An extension to the DdD to to add synced baseband audio support, with the DdD ca
 
 **Custom board**: I designed a custom board, which has RCAs for both the PCM 1802, and the integrated adc128s102, allowing to use 4 channels at the same time if desired. Has better power regulator than PCM1802 modules (maybe lower noise), has a DIP switch for -10dB input level if needed.
 
-This currently has some errors, notably the connectior is flipped so it doesn't fit as intended, and requires one small bodge for the dout output buffer (output enable needs to be low, not high). I have a few spare (pre-bodged and soldered, with RCAs once they arrive), contact @Doohickey in Domesday86 discord, for around €15 + cheap shipping in europe. I'll maybe make a fixed version later.
+Contact @Doohickey in Domesday86 discord, for around €20 + cheap shipping in europe.
 
 ![custom board photo](Documentation/audio-addon-board-pcm1802/custom_board_photo.jpg)
 
