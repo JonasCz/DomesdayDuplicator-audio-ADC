@@ -639,7 +639,7 @@ void MainWindow::updateCaptureStatus()
         // Populate the player serial info
         infoFile["serialInfo"]["playerModelCode"] = playerControl->getPlayerModelCode().toStdString();
         infoFile["serialInfo"]["playerModelName"] = playerControl->getPlayerModelName().toStdString();
-        infoFile["serialInfo"]["playerVesionNumber"] = playerControl->getPlayerVersionNumber().toStdString();
+        infoFile["serialInfo"]["playerVersionNumber"] = playerControl->getPlayerVersionNumber().toStdString();
         auto discType = playerDiscTypeCached;
         if (discType == PlayerCommunication::DiscType::CAV)
         {

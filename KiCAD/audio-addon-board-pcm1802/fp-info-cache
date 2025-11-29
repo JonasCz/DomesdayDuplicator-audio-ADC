@@ -1,4 +1,4 @@
-26742125757574910
+26743889697024585
 Audio_Module
 Reverb_BTDR-1H
 Digital Reverberation Unit, http://www.belton.co.kr/inc/downfile.php?seq=17&file=pdf (footprint from http://www.uk-electronic.de/PDF/BTDR-1.pdf)
@@ -105273,6 +105273,13 @@ Transformator Transformer Flyback Coilcraft Q4434-B Rgombus T1311
 8
 8
 Transformer_THT
+Transformer_E-9818
+NF-Transformer, 1:1, ETAL P1200,http://www.etalgroup.com/sites/default/files/products/P1200_April_2005.pdf
+NF-Transformer 1to1 ETAL P1200 
+0
+8
+7
+Transformer_THT
 Transformer_EPCOS_B66359A1013T_Horizontal
 Transformer, Transformator, ETD29, 13 Pin, Horizontal, EPCOS-B66359A1013T,
 Transformer Transformator ETD29 13 Pin Horizontal EPCOS-B66359A1013T 
@@ -105326,8 +105333,8 @@ Transformer_NF_ETAL_1-1_P1200
 NF-Transformer, 1:1, ETAL P1200,http://www.etalgroup.com/sites/default/files/products/P1200_April_2005.pdf
 NF-Transformer 1to1 ETAL P1200 
 0
-4
-4
+8
+7
 Transformer_THT
 Transformer_NF_ETAL_P1165
 NF-Transformer,  ETAL, P1165,http://www.etalgroup.com/sites/default/files/products/P1165_February_2006.pdf
