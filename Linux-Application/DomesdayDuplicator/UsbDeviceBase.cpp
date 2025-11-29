@@ -116,12 +116,13 @@ bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureF
     }
 #endif
 
-    // Create 12-bit audio WAV file for ADC128s022 if requested
+    // Create 16-bit raw audio file for ADC128s022 if requested
+    // Format: headerless PCM, 16-bit signed LE, stereo, 78125 Hz
     if (audioSource == AudioSource::Adc128s022 || audioSource == AudioSource::Both)
     {
         audioFilePath = filePath;
         audioFilePath.replace_extension("");
-        audioFilePath += "_audio_integrated_adc.wav";
+        audioFilePath += "_audio_integrated_adc.s16";
 
         audioOutputFile.clear();
         audioOutputFile.open(audioFilePath, std::ios::out | std::ios::trunc | std::ios::binary);
@@ -133,44 +134,16 @@ bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureF
             return false;
         }
 
-        // Write WAV header (will be updated with final sizes on close)
-        struct WavHeader {
-            char riff[4] = {'R','I','F','F'};
-            uint32_t fileSize = 0;  // Will update on close
-            char wave[4] = {'W','A','V','E'};
-            char fmt[4] = {'f','m','t',' '};
-            uint32_t fmtSize = 16;
-            uint16_t audioFormat = 1;  // PCM
-            uint16_t numChannels = 2;  // Stereo
-            uint32_t sampleRate = 78125;
-            uint32_t byteRate = 78125 * 2 * 2;  // sampleRate * channels * bytesPerSample
-            uint16_t blockAlign = 4;  // channels * bytesPerSample
-            uint16_t bitsPerSample = 16;
-            char data[4] = {'d','a','t','a'};
-            uint32_t dataSize = 0;  // Will update on close
-        };
-
-        WavHeader header;
-        audioOutputFile.write(reinterpret_cast<const char*>(&header), sizeof(header));
-
-        if (!audioOutputFile.good())
-        {
-            Log().Error("StartCapture(): Failed to write audio WAV header");
-            captureResult = TransferResult::FileCreationError;
-            audioOutputFile.close();
-            captureOutputFile.close();
-            return false;
-        }
-
-        Log().Info("StartCapture(): 12-bit audio file created: {0}", audioFilePath.string());
+        Log().Info("StartCapture(): 16-bit raw audio file created: {0}", audioFilePath.string());
     }
 
-    // Create 24-bit PCM audio WAV file for PCM1802 if requested
+    // Create 24-bit raw audio file for PCM1802 if requested
+    // Format: headerless PCM, 24-bit signed LE, stereo, 78125 Hz
     if (audioSource == AudioSource::Pcm1802 || audioSource == AudioSource::Both)
     {
         audio24FilePath = filePath;
         audio24FilePath.replace_extension("");
-        audio24FilePath += "_audio_external_adc.wav";
+        audio24FilePath += "_audio_external_adc.s24";
 
         audio24OutputFile.clear();
         audio24OutputFile.open(audio24FilePath, std::ios::out | std::ios::trunc | std::ios::binary);
@@ -183,34 +156,7 @@ bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureF
             return false;
         }
 
-        struct WavHeader24 {
-            char riff[4] = {'R','I','F','F'};
-            uint32_t fileSize = 0;
-            char wave[4] = {'W','A','V','E'};
-            char fmt[4] = {'f','m','t',' '};
-            uint32_t fmtSize = 16;
-            uint16_t audioFormat = 1;  // PCM
-            uint16_t numChannels = 2;
-            uint32_t sampleRate = 78125;
-            uint32_t byteRate = 78125 * 2 * 3; // 3 bytes per sample
-            uint16_t blockAlign = 6;
-            uint16_t bitsPerSample = 24;
-            char data[4] = {'d','a','t','a'};
-            uint32_t dataSize = 0;
-        };
-
-        WavHeader24 header24;
-        audio24OutputFile.write(reinterpret_cast<const char*>(&header24), sizeof(header24));
-        if (!audio24OutputFile.good())
-        {
-            Log().Error("StartCapture(): Failed to write 24-bit audio WAV header");
-            captureResult = TransferResult::FileCreationError;
-            audio24OutputFile.close();
-            if (audioOutputFile.is_open()) audioOutputFile.close();
-            captureOutputFile.close();
-            return false;
-        }
-        Log().Info("StartCapture(): 24-bit audio file created: {0}", audio24FilePath.string());
+        Log().Info("StartCapture(): 24-bit raw audio file created: {0}", audio24FilePath.string());
     }
 
     // Calculate the optimal read buffer size and number of disk buffers, and initialize the structures. We use an
@@ -1647,27 +1593,16 @@ bool UsbDeviceBase::WriteAudio24FramesToWav(const std::vector<int32_t>& leftSamp
     return audio24OutputFile.good();
 }
 
-// Finalize WAV file by updating header with final sizes
+// Finalize raw audio file
 bool UsbDeviceBase::FinalizeAudioWavFile()
 {
     if (!audioOutputFile.is_open()) {
         return false;
     }
 
-    // Get current file size
     audioOutputFile.flush();
     std::streampos currentPos = audioOutputFile.tellp();
     size_t totalFileSize = static_cast<size_t>(currentPos);
-
-    // Update RIFF chunk size (file size - 8)
-    audioOutputFile.seekp(4);
-    uint32_t riffChunkSize = static_cast<uint32_t>(totalFileSize - 8);
-    audioOutputFile.write(reinterpret_cast<const char*>(&riffChunkSize), 4);
-
-    // Update data chunk size (file size - 44)
-    audioOutputFile.seekp(40);
-    uint32_t dataChunkSize = static_cast<uint32_t>(totalFileSize - 44);
-    audioOutputFile.write(reinterpret_cast<const char*>(&dataChunkSize), 4);
 
     audioOutputFile.close();
 
@@ -1682,20 +1617,16 @@ bool UsbDeviceBase::FinalizeAudio24WavFile()
     if (!audio24OutputFile.is_open()) {
         return false;
     }
+
     audio24OutputFile.flush();
     std::streampos currentPos = audio24OutputFile.tellp();
     size_t totalFileSize = static_cast<size_t>(currentPos);
-    // Update RIFF chunk size
-    audio24OutputFile.seekp(4);
-    uint32_t riffChunkSize = static_cast<uint32_t>(totalFileSize - 8);
-    audio24OutputFile.write(reinterpret_cast<const char*>(&riffChunkSize), 4);
-    // Update data chunk size
-    audio24OutputFile.seekp(40);
-    uint32_t dataChunkSize = static_cast<uint32_t>(totalFileSize - 44);
-    audio24OutputFile.write(reinterpret_cast<const char*>(&dataChunkSize), 4);
+
     audio24OutputFile.close();
+
     Log().Info("24-bit audio file finalized: {0} ({1} frames, {2} bytes)",
         audio24FilePath.string(), audio24FrameCount.load(), totalFileSize);
+
     return true;
 }
 
