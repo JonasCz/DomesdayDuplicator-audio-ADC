@@ -444,6 +444,26 @@
            </property>
           </widget>
          </item>
+         <item row="9" column="0">
+          <widget class="QLabel" name="syncLossCountPreLabel">
+           <property name="text">
+            <string>Sync losses:</string>
+           </property>
+          </widget>
+         </item>
+         <item row="9" column="1" colspan="3">
+          <widget class="QLabel" name="syncLossCountLabel">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="text">
+            <string>0</string>
+           </property>
+          </widget>
+         </item>
         </layout>
        </item>
        <item>

@@ -59,7 +59,7 @@ public:
     void SendConfigurationCommand(const std::string& preferredDevicePath, bool testMode);
 
     // Capture methods
-    bool StartCapture(const std::filesystem::path& filePath, CaptureFormat format, AudioSource audioSource, const std::string& preferredDevicePath, bool isTestMode, bool useSmallUsbTransfers, bool useAsyncFileIo, size_t usbTransferQueueSizeInBytes, size_t diskBufferQueueSizeInBytes);
+    bool StartCapture(const std::filesystem::path& filePath, CaptureFormat format, AudioSource audioSource, const std::string& preferredDevicePath, bool isTestMode, bool useSmallUsbTransfers, bool useAsyncFileIo, size_t usbTransferQueueSizeInBytes, size_t diskBufferQueueSizeInBytes, bool stopOnDroppedSamples);
     void StopCapture();
     bool GetTransferInProgress() const;
     TransferResult GetTransferResult() const;
@@ -76,6 +76,7 @@ public:
     size_t GetRecentClippedMinSampleCount() const;
     size_t GetRecentClippedMaxSampleCount() const;
     bool GetTransferHadSequenceNumbers() const;
+    size_t GetSyncLossCount() const;
 
     // Audio capture methods
     size_t GetAudioFrameCount() const;
@@ -201,6 +202,7 @@ private:
     CaptureFormat captureFormat;
     AudioSource captureAudioSource = AudioSource::None;
     bool captureIsTestMode = false;
+    bool captureStopOnDroppedSamples = false;
     size_t currentUsbTransferQueueSizeInBytes = 0;
     bool currentUseSmallUsbTransfers = false;
 
@@ -283,6 +285,7 @@ private:
     uint64_t savedSequenceCounter = 0;  // 48-bit counter value
     std::optional<uint16_t> expectedNextTestDataValue;
     std::optional<uint16_t> testDataMax;
+    std::atomic<size_t> syncLossCount = 0;
 
     // Buffer sample state
     std::atomic_flag bufferSampleRequestPending;

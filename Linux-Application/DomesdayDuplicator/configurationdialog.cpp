@@ -94,6 +94,7 @@ void ConfigurationDialog::loadConfiguration(const Configuration& configuration)
     ui->captureDirectoryLineEdit->setText(configuration.getCaptureDirectory());
     ui->captureFormatComboBox->setCurrentIndex(ui->captureFormatComboBox->findData(static_cast<unsigned int>(configuration.getCaptureFormat())));
     ui->audioSourceComboBox->setCurrentIndex(ui->audioSourceComboBox->findData(static_cast<unsigned int>(configuration.getAudioSource())));
+    ui->stopOnDroppedSamplesCheckBox->setChecked(configuration.getStopOnDroppedSamples());
 
     // USB
     ui->vendorIdLineEdit->setText(QString::number(configuration.getUsbVid()));
@@ -160,6 +161,7 @@ void ConfigurationDialog::saveConfiguration(Configuration& configuration)
     configuration.setCaptureDirectory(ui->captureDirectoryLineEdit->text());
     configuration.setCaptureFormat(static_cast<Configuration::CaptureFormat>(ui->captureFormatComboBox->itemData(ui->captureFormatComboBox->currentIndex()).toInt()));
     configuration.setAudioSource(static_cast<Configuration::AudioSource>(ui->audioSourceComboBox->itemData(ui->audioSourceComboBox->currentIndex()).toInt()));
+    configuration.setStopOnDroppedSamples(ui->stopOnDroppedSamplesCheckBox->isChecked());
 
     // USB
     configuration.setUsbVid(static_cast<quint16>(ui->vendorIdLineEdit->text().toInt()));

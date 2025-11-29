@@ -65,7 +65,7 @@ void UsbDeviceBase::SendConfigurationCommand(const std::string& preferredDeviceP
 //----------------------------------------------------------------------------------------------------------------------
 // Capture methods
 //----------------------------------------------------------------------------------------------------------------------
-bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureFormat format, AudioSource audioSource, const std::string& preferredDevicePath, bool isTestMode, bool useSmallUsbTransfers, bool useAsyncFileIo, size_t usbTransferQueueSizeInBytes, size_t diskBufferQueueSizeInBytes)
+bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureFormat format, AudioSource audioSource, const std::string& preferredDevicePath, bool isTestMode, bool useSmallUsbTransfers, bool useAsyncFileIo, size_t usbTransferQueueSizeInBytes, size_t diskBufferQueueSizeInBytes, bool stopOnDroppedSamples)
 {
     // If we're already performing a capture, abort any further processing.
     if (transferInProgress)
@@ -184,6 +184,7 @@ bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureF
     captureFormat = format;
     captureAudioSource = audioSource;
     captureIsTestMode = isTestMode;
+    captureStopOnDroppedSamples = stopOnDroppedSamples;
     
     // Log the audio source configuration
     if (audioSource == AudioSource::None)
@@ -229,6 +230,7 @@ bool UsbDeviceBase::StartCapture(const std::filesystem::path& filePath, CaptureF
     savedSequenceCounter = 0;
     expectedNextTestDataValue.reset();
     testDataMax.reset();
+    syncLossCount = 0;
 
     // Initialize audio capture state
     audioSyncLocked = false;
@@ -628,6 +630,12 @@ size_t UsbDeviceBase::GetRecentClippedMaxSampleCount() const
 bool UsbDeviceBase::GetTransferHadSequenceNumbers() const
 {
     return (sequenceState != SequenceState::Disabled);
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+size_t UsbDeviceBase::GetSyncLossCount() const
+{
+    return syncLossCount;
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -1055,64 +1063,61 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
     audioRecentClippedMinSampleCount = 0;
     audioRecentClippedMaxSampleCount = 0;
 
-    // If we're in sync state, search for the sync pattern and lock
+    // Process samples, with ability to re-sync if sync is lost
     size_t sampleIndex = 0;
-    if (sequenceState == SequenceState::Sync)
+    while (sampleIndex < bufferSampleCount)
     {
-        Log().Info("ProcessSequenceMarkersAndUpdateSampleMetrics(): Searching for 192-bit sync pattern...");
-        
-        // Search through the buffer sample by sample to find the sync pattern
-        bool syncFound = false;
-        size_t searchLimit = (bufferSampleCount >= 512) ? (bufferSampleCount - 512) : 0;
-        
-        for (size_t searchSample = 0; searchSample <= searchLimit; searchSample++)
+        // If we need to sync, search for the sync pattern from current position
+        if (sequenceState == SequenceState::Sync)
         {
-            // Check 192-bit sync pattern (32 samples, 4 x 48-bit chunks)
-            bool patternMatches = true;
-            for (size_t chunk = 0; chunk < 4 && patternMatches; chunk++)
+            Log().Info("ProcessSequenceMarkersAndUpdateSampleMetrics(): Searching for 192-bit sync pattern from sample {0}...", sampleIndex);
+            
+            // Search through the buffer sample by sample to find the sync pattern
+            bool syncFound = false;
+            size_t searchLimit = (bufferSampleCount >= 512) ? (bufferSampleCount - 512) : 0;
+            
+            for (size_t searchSample = sampleIndex; searchSample <= searchLimit; searchSample++)
             {
-                uint64_t extracted = ExtractSyncPattern(diskBuffer, (searchSample + chunk * 8) * 2);
-                if (extracted != SYNC_PATTERN[chunk])
+                // Check 192-bit sync pattern (32 samples, 4 x 48-bit chunks)
+                bool patternMatches = true;
+                for (size_t chunk = 0; chunk < 4 && patternMatches; chunk++)
                 {
-                    patternMatches = false;
+                    uint64_t extracted = ExtractSyncPattern(diskBuffer, (searchSample + chunk * 8) * 2);
+                    if (extracted != SYNC_PATTERN[chunk])
+                    {
+                        patternMatches = false;
+                    }
+                }
+                
+                if (patternMatches)
+                {
+                    // Found the sync pattern! This is the start of a frame
+                    sampleIndex = searchSample;
+                    syncFound = true;
+                    
+                    // Extract first counter value from samples 48-55 of this frame
+                    size_t firstCounterSample = searchSample + COUNTER_START;
+                    uint64_t counterValue = Extract48BitCounter(diskBuffer, firstCounterSample * 2);
+                    
+                    Log().Info("ProcessSequenceMarkersAndUpdateSampleMetrics(): Sync locked at sample {0} (byte {1}), counter = 0x{2:X}", 
+                        searchSample, searchSample * 2, counterValue);
+                    
+                    sequenceState = SequenceState::Running;
+                    audioSyncLocked = true;
+                    audioFrameOffset = 0;
+                    expectedCounter = counterValue;
+                    break;
                 }
             }
             
-            if (patternMatches)
+            // If no sync found by end of search, wait for next buffer
+            if (!syncFound)
             {
-                // Found the sync pattern! This is the start of a frame
-                sampleIndex = searchSample;
-                syncFound = true;
-                
-                // Extract first counter value from samples 48-55 of this frame
-                size_t firstCounterSample = searchSample + COUNTER_START;
-                uint64_t counterValue = Extract48BitCounter(diskBuffer, firstCounterSample * 2);
-                
-                Log().Info("ProcessSequenceMarkersAndUpdateSampleMetrics(): Sync locked at sample {0} (byte {1}), counter = 0x{2:X}", 
-                    searchSample, searchSample * 2, counterValue);
-                
-                sequenceState = SequenceState::Running;
-                audioSyncLocked = true;
-                audioFrameOffset = 0;
-                expectedCounter = counterValue;
-                break;
+                Log().Warning("ProcessSequenceMarkersAndUpdateSampleMetrics(): Sync pattern not found in remainder of buffer, will retry on next buffer");
+                break;  // Exit and wait for next buffer
             }
         }
-        
-        // If no sync found by end of search, it's an error
-        if (!syncFound)
-        {
-            Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Failed to find sync pattern in buffer");
-            Log().Error("  Buffer size: {0} samples ({1} bytes)", bufferSampleCount, diskBufferSizeInBytes);
-            Log().Error("  Search limit: {0} samples", searchLimit);
-            sequenceState = SequenceState::Failed;
-            return false;
-        }
-    }
 
-    // Process samples starting from sampleIndex, handling frame boundaries
-    while (sampleIndex < bufferSampleCount)
-    {
         size_t samplesLeftInBuffer = bufferSampleCount - sampleIndex;
         size_t samplesLeftInFrame = SAMPLES_PER_FRAME - audioFrameOffset;
         size_t samplesToProcess = std::min(samplesLeftInBuffer, samplesLeftInFrame);
@@ -1135,10 +1140,19 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
                 
                 if (!syncValid)
                 {
-                    Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Sync pattern lost at sample {0}",
+                    Log().Warning("ProcessSequenceMarkersAndUpdateSampleMetrics(): Sync pattern lost at sample {0}, searching for resync...",
                         sampleIndex);
-                    sequenceState = SequenceState::Failed;
-                    return false;
+                    ++syncLossCount;
+                    if (captureStopOnDroppedSamples)
+                    {
+                        sequenceState = SequenceState::Failed;
+                        return false;
+                    }
+                    // Search for next sync pattern from current position
+                    sequenceState = SequenceState::Sync;
+                    audioFrameOffset = 0;
+                    ++sampleIndex;  // Skip this sample and try to find sync
+                    continue;
                 }
             }
             
@@ -1253,10 +1267,15 @@ bool UsbDeviceBase::ProcessSequenceMarkersAndUpdateSampleMetrics(size_t diskBuff
                     
                     if (actualCounter != expectedCounter)
                     {
-                        Log().Error("ProcessSequenceMarkersAndUpdateSampleMetrics(): Counter mismatch at sample {0} (frame offset {1})! Expected 0x{2:X} but got 0x{3:X}",
+                        Log().Warning("ProcessSequenceMarkersAndUpdateSampleMetrics(): Counter mismatch at sample {0} (frame offset {1})! Expected 0x{2:X} but got 0x{3:X}",
                             sampleIndex, audioFrameOffset, expectedCounter, actualCounter);
-                        sequenceState = SequenceState::Failed;
-                        return false;
+                        if (captureStopOnDroppedSamples)
+                        {
+                            sequenceState = SequenceState::Failed;
+                            return false;
+                        }
+                        // Update expected counter to continue from actual value
+                        expectedCounter = actualCounter;
                     }
                     
                     // Counter is valid, increment expected value for next block

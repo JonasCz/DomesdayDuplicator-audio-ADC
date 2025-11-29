@@ -555,6 +555,7 @@ void MainWindow::updateCaptureStatus()
     ui->recentMaxValueLabel->setText(std::to_string(usbDevice->GetRecentMaxSampleValue()).c_str());
     ui->recentMinValueClippedLabel->setText(std::to_string(usbDevice->GetRecentClippedMinSampleCount()).c_str());
     ui->recentMaxValueClippedLabel->setText(std::to_string(usbDevice->GetRecentClippedMaxSampleCount()).c_str());
+    ui->syncLossCountLabel->setText(std::to_string(usbDevice->GetSyncLossCount()).c_str());
     
     // Update audio statistics
     auto audioSource = configuration->getAudioSource();
@@ -1501,7 +1502,8 @@ void MainWindow::StartCapture()
 
     // Attempt to start the capture process
     qDebug() << "MainWindow::StartCapture(): Starting capture to file:" << captureFilePath.string().c_str();
-    if (!usbDevice->StartCapture(captureFilePath, captureFormat, audioSource, configuration->getUsbPreferredDevice().toStdString(), isTestMode, useSmallUsbTransfers, useAsyncFileIo, maxUsbTransferQueueSizeInBytes, maxDiskBufferQueueSizeInBytes))
+    bool stopOnDroppedSamples = configuration->getStopOnDroppedSamples();
+    if (!usbDevice->StartCapture(captureFilePath, captureFormat, audioSource, configuration->getUsbPreferredDevice().toStdString(), isTestMode, useSmallUsbTransfers, useAsyncFileIo, maxUsbTransferQueueSizeInBytes, maxDiskBufferQueueSizeInBytes, stopOnDroppedSamples))
     {
         // Show an error based on the transfer result
         qDebug() << "MainWindow::StartCapture(): Failed to begin the capture process";

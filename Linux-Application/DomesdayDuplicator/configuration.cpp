@@ -64,6 +64,7 @@ void Configuration::writeConfiguration()
     configuration->setValue("captureDirectory", settings.capture.captureDirectory);
     configuration->setValue("captureFormat", convertCaptureFormatToInt(settings.capture.captureFormat));
     configuration->setValue("audioSource", convertAudioSourceToInt(settings.capture.audioSource));
+    configuration->setValue("stopOnDroppedSamples", settings.capture.stopOnDroppedSamples);
     configuration->endGroup();
 
     // UI
@@ -119,6 +120,7 @@ void Configuration::readConfiguration()
     settings.capture.captureDirectory = configuration->value("captureDirectory").toString();
     settings.capture.captureFormat = convertIntToCaptureFormat(configuration->value("captureFormat").toInt());
     settings.capture.audioSource = convertIntToAudioSource(configuration->value("audioSource").toInt());
+    settings.capture.stopOnDroppedSamples = configuration->value("stopOnDroppedSamples").toBool();
     configuration->endGroup();
 
     // UI
@@ -168,6 +170,7 @@ void Configuration::setDefault()
     settings.capture.captureDirectory = QDir::homePath();
     settings.capture.captureFormat = CaptureFormat::tenBitPacked;
     settings.capture.audioSource = AudioSource::none;
+    settings.capture.stopOnDroppedSamples = false;
 
     // UI
     settings.ui.perSideNotesEnabled = false;
@@ -299,6 +302,16 @@ void Configuration::setCaptureFormat(CaptureFormat captureFormat)
 Configuration::CaptureFormat Configuration::getCaptureFormat() const
 {
     return settings.capture.captureFormat;
+}
+
+void Configuration::setStopOnDroppedSamples(bool stopOnDroppedSamples)
+{
+    settings.capture.stopOnDroppedSamples = stopOnDroppedSamples;
+}
+
+bool Configuration::getStopOnDroppedSamples() const
+{
+    return settings.capture.stopOnDroppedSamples;
 }
 
 // USB settings

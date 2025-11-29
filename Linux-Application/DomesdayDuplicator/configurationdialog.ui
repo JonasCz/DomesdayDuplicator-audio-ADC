@@ -120,6 +120,13 @@
         </layout>
        </item>
        <item>
+        <widget class="QCheckBox" name="stopOnDroppedSamplesCheckBox">
+         <property name="text">
+          <string>Stop captures on sequence mismatch</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <spacer name="verticalSpacer_2">
          <property name="sizeHint" stdset="0">
           <size>
