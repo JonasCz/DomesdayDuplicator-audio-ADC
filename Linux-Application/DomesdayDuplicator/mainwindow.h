@@ -93,6 +93,7 @@ private slots:
     void on_actionPlayer_remote_triggered();
     void on_actionAutomatic_capture_triggered();
     void on_limitDurationCheckBox_stateChanged(int arg1);
+    void on_stopCaptureOnAmplitudeDropCheckBox_stateChanged(int arg1);
     void on_actionAdvanced_naming_triggered();
 
 private:
@@ -186,7 +187,11 @@ private:
     qint32 remoteSpeed;
     PlayerCommunication::ChapterFrameMode remoteChapterFrameMode;
 
+    // Amplitude drop tracking for auto-stop
+    std::optional<std::chrono::time_point<std::chrono::steady_clock>> amplitudeDropStartTime;
+
     void startPlayerControl();
     void updatePlayerRemoteDialog();
     void updateAmplitudeUI();
+    void checkAmplitudeDropStop();
 };

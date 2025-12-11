@@ -1489,6 +1489,7 @@ void MainWindow::StartCapture()
 
     // Initialize our transfer state settings
     playerStopRequested = false;
+    amplitudeDropStartTime.reset();
 
     // Determine the USB transer settings. Unless a small USB transfer queue is selected, we assume we can buffer up to
     // the disk buffer limit. Currently this would be up to 512mb of memory. Small transfer queue mode is done for the
@@ -1579,6 +1580,16 @@ void MainWindow::on_limitDurationCheckBox_stateChanged(int arg1)
     }
 }
 
+// Stop capture on amplitude drop checkbox state changed
+void MainWindow::on_stopCaptureOnAmplitudeDropCheckBox_stateChanged(int arg1)
+{
+    (void)arg1;
+
+    bool enabled = ui->stopCaptureOnAmplitudeDropCheckBox->isChecked();
+    ui->amplitudeDropThresholdSpinBox->setEnabled(enabled);
+    ui->amplitudeDropSecondsSpinBox->setEnabled(enabled);
+}
+
 // Update the player remote control dialogue
 void MainWindow::updatePlayerRemoteDialog()
 {
@@ -1642,6 +1653,9 @@ void MainWindow::updateAmplitudeLabel()
         amplitudeRecord.push_back({ std::chrono::steady_clock::now(), amplitude });
     }
     ui->meanAmplitudeLabel->setText(QString::number(amplitude, 'f', 3));
+
+    // Check if we should stop capture due to amplitude drop
+    checkAmplitudeDropStop();
 }
 
 // Timer callback to update audio amplitude display
@@ -1710,5 +1724,48 @@ void MainWindow::updateAmplitudeUI()
         disconnect(amplitudeTimer.get(), SIGNAL(timeout()), this, SLOT(updateAudioAmplitudeLabel()));
         disconnect(amplitudeTimer.get(), SIGNAL(timeout()), ui->am_2, SLOT(plotGraph()));
         ui->am_2->setVisible(false);
+    }
+}
+
+// Check if amplitude has dropped below threshold for the specified duration
+void MainWindow::checkAmplitudeDropStop()
+{
+    if (!isCaptureRunning || isCaptureStopping)
+    {
+        return;
+    }
+
+    if (!ui->stopCaptureOnAmplitudeDropCheckBox->isChecked())
+    {
+        amplitudeDropStartTime.reset();
+        return;
+    }
+
+    double currentAmplitude = ui->am->getMeanAmplitude();
+    double threshold = ui->amplitudeDropThresholdSpinBox->value();
+    int requiredSeconds = ui->amplitudeDropSecondsSpinBox->value();
+
+    if (currentAmplitude < threshold)
+    {
+        if (!amplitudeDropStartTime.has_value())
+        {
+            // Start tracking the low amplitude period
+            amplitudeDropStartTime = std::chrono::steady_clock::now();
+        }
+        else
+        {
+            // Check if we've been below threshold long enough
+            auto elapsedTime = std::chrono::steady_clock::now() - amplitudeDropStartTime.value();
+            if (elapsedTime >= std::chrono::seconds(requiredSeconds))
+            {
+                qDebug() << "MainWindow::checkAmplitudeDropStop(): Stopping capture - amplitude" << currentAmplitude << "below threshold" << threshold << "for" << requiredSeconds << "seconds";
+                StopCapture();
+            }
+        }
+    }
+    else
+    {
+        // Amplitude is above threshold, reset the tracking
+        amplitudeDropStartTime.reset();
     }
 }

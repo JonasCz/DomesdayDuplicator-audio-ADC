@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <chrono>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
@@ -203,6 +204,7 @@ private:
     AudioSource captureAudioSource = AudioSource::None;
     bool captureIsTestMode = false;
     bool captureStopOnDroppedSamples = false;
+    std::chrono::steady_clock::time_point captureStartTime;
     size_t currentUsbTransferQueueSizeInBytes = 0;
     bool currentUseSmallUsbTransfers = false;
 
