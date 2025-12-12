@@ -58,8 +58,8 @@ private slots:
     void on_captureDirectoryPushButton_clicked();
     void on_buttonBox_accepted();
     void on_buttonBox_rejected();
-
     void on_buttonBox_clicked(QAbstractButton *button);
+    void on_useWinUsb_toggled(bool checked);
 
 private:
     std::unique_ptr<Ui::ConfigurationDialog> ui;

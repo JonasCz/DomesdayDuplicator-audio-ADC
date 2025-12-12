@@ -69,6 +69,9 @@ ConfigurationDialog::ConfigurationDialog(QWidget *parent) :
     ui->useAsyncFileIo->setChecked(false);
     ui->useAsyncFileIo->setEnabled(false);
 #endif
+
+    // Connect useWinUsb toggle to update stopOnDroppedSamples state
+    connect(ui->useWinUsb, &QCheckBox::toggled, this, &ConfigurationDialog::on_useWinUsb_toggled);
 }
 
 ConfigurationDialog::~ConfigurationDialog()
@@ -150,6 +153,9 @@ void ConfigurationDialog::loadConfiguration(const Configuration& configuration)
     ui->amplitudeLabelCheckBox->setChecked(configuration.getAmplitudeLabelEnabled());
     ui->amplitudeChartCheckBox->setChecked(configuration.getAmplitudeChartEnabled());
     ui->advancedCaptureStatsCheckBox->setChecked(configuration.getShowAdvancedCaptureStats());
+
+    // Update stopOnDroppedSamples state based on WinUSB setting
+    on_useWinUsb_toggled(ui->useWinUsb->isChecked());
 }
 
 // Save the configuration settings from the UI widgets
@@ -234,5 +240,18 @@ void ConfigurationDialog::on_buttonBox_clicked(QAbstractButton *button)
         Configuration defaultConfig(this);
         defaultConfig.setDefault();
         loadConfiguration(defaultConfig);
+    }
+}
+
+// Handle useWinUsb checkbox state changes
+void ConfigurationDialog::on_useWinUsb_toggled(bool checked)
+{
+    if (checked) {
+        // When WinUSB is enabled, force stopOnDroppedSamples to be checked and disabled
+        ui->stopOnDroppedSamplesCheckBox->setChecked(true);
+        ui->stopOnDroppedSamplesCheckBox->setEnabled(false);
+    } else {
+        // When WinUSB is disabled, enable the checkbox for user control
+        ui->stopOnDroppedSamplesCheckBox->setEnabled(true);
     }
 }
