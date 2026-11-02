@@ -225,6 +225,7 @@ set_location_assignment PIN_A9 -to ADC_SDAT
 # Every other pin is high-Z. Names and locations are Terasic's - their
 # reference .qsf and the user manual's Table 3-8 - and the header pin
 # numbers are from the board schematic. GPIO_2_IN[2:0] are input-only.
+# GPIO_2[9], PIN_F16, is also the device's nCEO; see "nCEO" below.
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[0]
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[1]
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[2]
@@ -424,6 +425,19 @@ set_global_assignment -name STRATIXIII_UPDATE_MODE "REMOTE"
 # them from the asmiBlock instance - and every pin that does is assigned
 # 3.3-V LVTTL individually above, so the default reaches nothing else.
 set_global_assignment -name STRATIX_DEVICE_IO_STANDARD "3.3-V LVTTL"
+
+#============================================================
+# nCEO
+#============================================================
+# PIN_F16 is the device's nCEO, a dual-purpose configuration pin, and the
+# DE0-Nano also routes it to JP3 as GPIO_2[9]. nCEO only passes configuration
+# on to the nCE of a next device in a chain, and the DE0-Nano's chain is this
+# one device, so nothing depends on it. The Cyclone IV default keeps it as a
+# programming pin after configuration, which puts two pins at F16 and fails
+# the fit. Released to regular I/O, it is GPIO_2[9], high-Z like the other
+# unused JP3 pins. While the device is configuring it is nCEO either way.
+# The factory image declares no JP3 pins and keeps the default.
+set_global_assignment -name CYCLONEII_RESERVE_NCEO_AFTER_CONFIGURATION "USE AS REGULAR IO"
 
 # The gateware shared with the factory image lives in fpga/common and is named
 # here by relative path, so there is one copy of the register bank and the
