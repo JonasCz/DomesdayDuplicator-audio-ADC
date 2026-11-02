@@ -11,6 +11,7 @@ interconnect that sit between the RF source and the DE0-NANO/FX3 boards.
 | [pcb/fab/](pcb/fab/) | Fabrication outputs, one frozen directory per board revision |
 | [pcb/tools/](pcb/tools/) | Plotting and Gerber comparison scripts |
 | [doc/](doc/) | Hardware documentation, including the gain and filter calculations |
+| [audio-addon-pcm1802/](audio-addon-pcm1802/) | Optional add-on board for capturing baseband audio alongside RF |
 
 The project is on the current KiCad format (10). Board revisions are recorded in
 [pcb/CHANGELOG.md](pcb/CHANGELOG.md), and [pcb/MIGRATION.md](pcb/MIGRATION.md) documents the
