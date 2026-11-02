@@ -17,12 +17,14 @@
 #include <filesystem>
 #include <system_error>
 
+#include "audio_sink.h"
 #include "capture_failure_presenter.h"
 #include "capture_format.h"
 #include "capture_metadata.h"
 #include "capture_naming.h"
 #include "capture_provenance.h"
 #include "firmware_version.h"
+#include "framed_format.h"
 #include "free_space.h"
 #include "gain_choices.h"
 #include "log_format.h"
@@ -31,6 +33,7 @@
 #include "sample_format.h"
 #include "sample_sink.h"
 #include "statistics_presenter.h"
+#include "stream_validator.h"
 #include "version.h"
 #include "wire_protocol.h"
 
@@ -311,6 +314,8 @@ void CaptureController::StartMonitoring() {
   capture::CapturePipeline::Options options;
   options.queue_size_bytes = settings_.queue_size_bytes;
   options.test_mode = settings_.test_mode;
+  options.continue_after_dropped_samples =
+      settings_.continue_after_dropped_samples;
 
   // Only the log uses this, and it is why the log's times are right under
   // decimation: a 2:1 capture delivers half as many samples a second, so a
@@ -458,6 +463,22 @@ std::unique_ptr<capture::ISampleSink> CaptureController::OpenCaptureFile() {
     return nullptr;
   }
 
+  // The device's loss counters as they stand, so that what the sidecar reports
+  // is what the device lost while writing this file rather than what it has
+  // lost since monitoring began. The signal figures need no equivalent: the
+  // engine measures those over a span of their own — see
+  // SampleMetrics::BeginCaptureSpan.
+  //
+  // Read here rather than further down because the audio needs it too: a
+  // stream that has already been looked at says whether there is any audio to
+  // write.
+  const capture::CaptureStats opening = pipeline_->stats().Read();
+
+  sink = AddAudioFiles(std::move(sink), path, opening);
+  if (sink == nullptr) {
+    return nullptr;
+  }
+
   capture_path_ = QString::fromStdString(path.string());
 
   // What the sidecar will say about the setup this capture ran with. Taken now
@@ -483,14 +504,9 @@ std::unique_ptr<capture::ISampleSink> CaptureController::OpenCaptureFile() {
         DescribeFrontEndGain(settings_.front_end_gain_switches).toStdString();
   }
 
-  // The device's loss counters as they stand, so that what the sidecar reports
-  // is what the device lost while writing this file rather than what it has
-  // lost since monitoring began. The signal figures need no equivalent: the
-  // engine measures those over a span of their own — see
-  // SampleMetrics::BeginCaptureSpan.
-  const capture::CaptureStats opening = pipeline_->stats().Read();
   device_overflows_at_start_ = opening.device_overflow_events;
   device_drops_at_start_ = opening.device_dropped_words;
+  sync_losses_at_start_ = opening.sync_losses;
 
   if (logger_ != nullptr) {
     logger_->Info("Capturing to " + path.string() + " (" + sink->Name() +
@@ -507,7 +523,10 @@ std::unique_ptr<capture::ISampleSink> CaptureController::OpenCaptureFile() {
         capture::FormatDecimal(
             static_cast<double>(pending_metadata_.sample_rate_hz) / 1.0e6, 3) +
         " Msps, ring " + capture::FormatBytes(settings_.queue_size_bytes) +
-        ", test mode " + (settings_.test_mode ? "on" : "off") +
+        ", test mode " + (settings_.test_mode ? "on" : "off") + ", audio " +
+        capture::AudioSourceName(settings_.audio_source) +
+        ", continue after dropped samples " +
+        (settings_.continue_after_dropped_samples ? "on" : "off") +
         ", duration limit " +
         (settings_.duration_limit_seconds > 0
              ? capture::FormatDuration(
@@ -538,6 +557,235 @@ std::unique_ptr<capture::ISampleSink> CaptureController::OpenCaptureFile() {
     }
   }
   return sink;
+}
+
+std::unique_ptr<capture::ISampleSink> CaptureController::AddAudioFiles(
+    std::unique_ptr<capture::ISampleSink> rf_sink,
+    const std::filesystem::path& capture_file,
+    const capture::CaptureStats& opening) {
+  capture_audio_source_ = settings_.audio_source;
+  integrated_audio_path_.clear();
+  external_audio_path_.clear();
+  audio_unavailable_reported_ = false;
+
+  if (capture_audio_source_ == capture::AudioSource::kNone) {
+    return rf_sink;
+  }
+
+  // A stream that has been running long enough to be looked at, and turned out
+  // to carry the sequence counter, has no audio in it to write. Said now, and
+  // no files are made.
+  //
+  // A stream that has not been looked at yet — a capture started from idle, a
+  // moment after the device was opened — gets its files, and they are taken
+  // away again at the end if it turns out to have had nothing to put in them.
+  // Waiting to open them until the stream had spoken would mean opening files
+  // on the processing thread, partway into a capture.
+  if (opening.stream_format == capture::StreamFormat::kSequenceCounter) {
+    ReportAudioUnavailable();
+    return rf_sink;
+  }
+
+  std::unique_ptr<capture::RawAudioWriter> integrated;
+  std::unique_ptr<capture::RawAudioWriter> external;
+  std::string error;
+
+  const auto open = [&capture_file, &error](
+                        capture::AudioConverter converter,
+                        std::unique_ptr<capture::RawAudioWriter>& writer,
+                        std::filesystem::path& opened_at) {
+    const std::filesystem::path path = capture::MakeUniqueAudioPath(
+        capture::AudioFilePath(capture_file, converter));
+    writer = std::make_unique<capture::RawAudioWriter>(converter);
+    if (!writer->Open(path)) {
+      error = writer->LastError();
+      writer.reset();
+      return false;
+    }
+    opened_at = path;
+    return true;
+  };
+
+  bool opened = true;
+  if (capture::RecordsIntegratedAudio(capture_audio_source_)) {
+    opened = open(capture::AudioConverter::kIntegrated, integrated,
+                  integrated_audio_path_);
+  }
+  if (opened && capture::RecordsExternalAudio(capture_audio_source_)) {
+    opened = open(capture::AudioConverter::kExternal, external,
+                  external_audio_path_);
+  }
+
+  if (!opened) {
+    // Nothing half-made is left behind. The RF file was created a moment ago
+    // and holds nothing, and a capture that cannot write what it was asked to
+    // write is refused as a whole, the same way one whose RF file cannot be
+    // created is.
+    integrated.reset();
+    external.reset();
+    rf_sink->Finish();
+    rf_sink.reset();
+
+    std::error_code ignored;
+    std::filesystem::remove(capture_file, ignored);
+    for (const std::filesystem::path& made :
+         {integrated_audio_path_, external_audio_path_}) {
+      if (!made.empty()) {
+        std::filesystem::remove(made, ignored);
+      }
+    }
+    integrated_audio_path_.clear();
+    external_audio_path_.clear();
+    capture_audio_source_ = capture::AudioSource::kNone;
+
+    const CaptureFailureView view =
+        PresentCaptureFailure(capture::TransferResult::kFileCreationError,
+                              QString::fromStdString(error), QString());
+    emit Failed(view.title, view.ToMessage());
+    return nullptr;
+  }
+
+  if (logger_ != nullptr) {
+    for (const std::filesystem::path& made :
+         {integrated_audio_path_, external_audio_path_}) {
+      if (!made.empty()) {
+        logger_->Info("Writing audio to " + made.string());
+      }
+    }
+  }
+
+  return std::make_unique<capture::CaptureSinkWithAudio>(
+      std::move(rf_sink), std::move(integrated), std::move(external));
+}
+
+void CaptureController::ReportAudioUnavailable() {
+  if (audio_unavailable_reported_) {
+    return;
+  }
+  audio_unavailable_reported_ = true;
+
+  const QString message =
+      tr("Audio was asked for, but this device's gateware does not send any: "
+         "its stream carries the sequence counter rather than the framed "
+         "format audio travels in. The capture is going ahead without audio "
+         "files.");
+  if (logger_ != nullptr) {
+    logger_->Warning(message.toStdString());
+  }
+  emit AudioUnavailable(message);
+}
+
+void CaptureController::CheckAudioAvailability(
+    const capture::CaptureStats& stats) {
+  if (!capturing_ || capture_audio_source_ == capture::AudioSource::kNone ||
+      audio_unavailable_reported_) {
+    return;
+  }
+  if (stats.stream_format == capture::StreamFormat::kSequenceCounter) {
+    ReportAudioUnavailable();
+  }
+}
+
+void CaptureController::FinishAudioFiles(
+    const capture::CaptureStats& stats, const capture::AudioWriteSummary& audio,
+    const std::filesystem::path& capture_file) {
+  pending_metadata_.audio = capture::AudioRecording{};
+  if (capture_audio_source_ == capture::AudioSource::kNone) {
+    return;
+  }
+
+  pending_metadata_.audio.requested =
+      capture::AudioSourceName(capture_audio_source_);
+
+  const bool framed = stats.stream_format == capture::StreamFormat::kFramed;
+  const double rate = capture::FramedAudioSampleRateHz(
+      pending_metadata_.sample_rate_hz != 0 ? pending_metadata_.sample_rate_hz
+                                            : settings_.SampleRateHz());
+
+  const auto finish_one = [&](capture::AudioConverter converter,
+                              std::filesystem::path& path,
+                              const capture::AudioFileTally& tally,
+                              capture::AudioFileRecord& record) {
+    if (path.empty()) {
+      return;
+    }
+
+    std::error_code error;
+
+    // A file the stream never had anything to put in. Taken away rather than
+    // left as an empty file beside the capture, which would read as audio that
+    // was recorded silent.
+    if (!framed && tally.frames == 0) {
+      std::filesystem::remove(path, error);
+      if (logger_ != nullptr) {
+        logger_->Info("Removed " + path.string() +
+                      ", which the stream had no audio for");
+      }
+      path.clear();
+      return;
+    }
+
+    // Beside the capture under its final name. The capture is renamed when its
+    // naming asks for its length, and audio left under the old name would be
+    // orphaned by that.
+    const std::filesystem::path wanted =
+        capture::AudioFilePath(capture_file, converter);
+    if (wanted != path) {
+      const std::filesystem::path renamed =
+          capture::MakeUniqueAudioPath(wanted);
+      std::filesystem::rename(path, renamed, error);
+      if (error) {
+        if (logger_ != nullptr) {
+          logger_->Warning("The audio file could not be renamed to " +
+                           renamed.string() + ": " + error.message());
+        }
+      } else {
+        path = renamed;
+      }
+    }
+
+    const bool integrated = converter == capture::AudioConverter::kIntegrated;
+    record.file_name = path.filename().string();
+    record.converter = integrated ? "ADC128S022" : "PCM1802";
+    record.encoding =
+        integrated
+            ? "signed 16-bit little-endian, the converter's 12-bit reading "
+              "shifted up by four; interleaved stereo, left first; no header"
+            : "signed 24-bit little-endian, three bytes a sample; interleaved "
+              "stereo, left first; no header";
+    record.bits_per_sample = integrated ? 16 : 24;
+    record.sample_rate_hz = rate;
+    record.samples = tally.frames;
+    record.bytes = tally.bytes;
+    record.clipped_samples = tally.clipped_samples;
+    record.peak = tally.peak;
+    record.full_scale = integrated ? capture::kIntegratedAudioFullScale
+                                   : capture::kExternalAudioFullScale;
+
+    if (logger_ != nullptr) {
+      logger_->Info("Audio file: " + path.string() + ", " +
+                    std::to_string(tally.frames) + " stereo samples at " +
+                    capture::FormatDecimal(rate, 1) + " Hz, " +
+                    capture::FormatBytes(tally.bytes) + ", " +
+                    std::to_string(tally.clipped_samples) + " clipped");
+    }
+  };
+
+  finish_one(capture::AudioConverter::kIntegrated, integrated_audio_path_,
+             audio.integrated, pending_metadata_.audio.integrated);
+  finish_one(capture::AudioConverter::kExternal, external_audio_path_,
+             audio.external, pending_metadata_.audio.external);
+
+  if (!framed) {
+    pending_metadata_.audio.not_recorded =
+        stats.stream_format == capture::StreamFormat::kSequenceCounter
+            ? "This gateware does not send audio: its stream carries the "
+              "sequence counter rather than the framed format."
+            : "The capture ended before its stream had been looked at.";
+    if (stats.stream_format == capture::StreamFormat::kSequenceCounter) {
+      ReportAudioUnavailable();
+    }
+  }
 }
 
 void CaptureController::StartCapture() {
@@ -604,12 +852,16 @@ void CaptureController::CollectFinishedCapture(
       pipeline_->TakeRetiredSink();
   const uint64_t bytes = retired != nullptr ? retired->BytesWritten() : 0;
   const uint64_t samples = retired != nullptr ? retired->SamplesWritten() : 0;
+  const capture::AudioWriteSummary audio = retired != nullptr
+                                               ? retired->AudioWritten()
+                                               : capture::AudioWriteSummary{};
 
-  FinishCaptureFile(stats, bytes, samples);
+  FinishCaptureFile(stats, bytes, samples, audio);
 }
 
-void CaptureController::FinishCaptureFile(const capture::CaptureStats& stats,
-                                          uint64_t bytes, uint64_t samples) {
+void CaptureController::FinishCaptureFile(
+    const capture::CaptureStats& stats, uint64_t bytes, uint64_t samples,
+    const capture::AudioWriteSummary& audio) {
   // The length of what was recorded, worked out from the file's own contents
   // rather than from a clock. Samples divided by the rate they were written at
   // is exactly the duration of the recording, where an elapsed time would
@@ -674,6 +926,8 @@ void CaptureController::FinishCaptureFile(const capture::CaptureStats& stats,
       pending_metadata_.capture_file_name = file.filename().string();
     }
   }
+
+  FinishAudioFiles(stats, audio, file);
 
   WriteMetadataSidecar(file, stats, bytes, samples, duration_seconds);
 
@@ -774,6 +1028,28 @@ void CaptureController::WriteMetadataSidecar(
   // is nonetheless a statement about this file.
   metadata.outcome.sequence_check =
       capture::SequenceStateName(stats.sequence_state);
+
+  // What the stream was, and for a framed one the losses inside this file —
+  // differences, for the reason the device's counters are.
+  if (stats.stream_format != capture::StreamFormat::kUndetermined) {
+    metadata.stream_format = capture::StreamFormatName(stats.stream_format);
+  }
+  if (stats.stream_format == capture::StreamFormat::kFramed) {
+    metadata.outcome.sync_losses_counted = true;
+    metadata.outcome.sync_losses =
+        Since(stats.sync_losses, sync_losses_at_start_);
+
+    // The validator's state is the session's, and "resynchronised" is sticky.
+    // A loss carried on past before this file was opened is not a hole in
+    // this file — unlike a sequence-counter mismatch, it did not end the run —
+    // so a file with none of its own is described by the state the check was
+    // in for all of it.
+    if (stats.sequence_state == capture::SequenceState::kResynchronised &&
+        metadata.outcome.sync_losses == 0) {
+      metadata.outcome.sequence_check =
+          capture::SequenceStateName(capture::SequenceState::kRunning);
+    }
+  }
 
   // Derived rather than copied. The pipeline's flag says the ramp was checked
   // somewhere in the session, which for a file's own metadata is the wrong
@@ -899,6 +1175,7 @@ void CaptureController::Tick() {
 
   CheckDurationLimit(stats);
   CheckFreeSpace();
+  CheckAudioAvailability(stats);
   CollectFinishedCapture(stats);
 
   // The pipeline stops on its own schedule: a requested stop still has to drain
@@ -969,7 +1246,7 @@ void CaptureController::FinishRun() {
     closing.result = result;
 
     FinishCaptureFile(closing, final_stats.bytes_written,
-                      final_stats.samples_written);
+                      final_stats.samples_written, final_stats.audio_written);
   }
 
   if (capture::TransferFailed(result)) {

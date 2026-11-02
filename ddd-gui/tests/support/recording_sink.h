@@ -12,9 +12,11 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
+#include "framed_format.h"
 #include "sample_format.h"
 #include "sample_sink.h"
 
@@ -60,6 +62,14 @@ class RecordingSink : public ISampleSink {
   uint64_t SamplesWritten() const override { return samples_written_; }
   const std::string& LastError() const override { return last_error_; }
 
+  // Kept like the samples, so a test can say which audio reached the sink and
+  // in which buffer's call.
+  bool WriteAudio(std::span<const AudioFrame> frames) override {
+    audio_.insert(audio_.end(), frames.begin(), frames.end());
+    audio_after_write_.push_back(write_calls_);
+    return true;
+  }
+
   // Make the next Write() fail, so the pipeline's file-error path can be
   // exercised without a full disk.
   void FailNextWrite(const std::string& message) {
@@ -73,10 +83,18 @@ class RecordingSink : public ISampleSink {
   const std::vector<size_t>& samples_per_write() const {
     return samples_per_write_;
   }
+  const std::vector<AudioFrame>& audio() const { return audio_; }
+
+  // For each WriteAudio() call, how many Write() calls had been made before it.
+  const std::vector<uint64_t>& audio_after_write() const {
+    return audio_after_write_;
+  }
 
  private:
   std::vector<uint16_t> values_;
   std::vector<size_t> samples_per_write_;
+  std::vector<AudioFrame> audio_;
+  std::vector<uint64_t> audio_after_write_;
   uint64_t samples_written_ = 0;
   uint64_t write_calls_ = 0;
   bool finished_ = false;

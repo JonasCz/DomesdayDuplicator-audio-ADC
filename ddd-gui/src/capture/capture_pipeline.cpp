@@ -12,8 +12,11 @@
 #include "capture_pipeline.h"
 
 #include <algorithm>
+#include <string>
 #include <utility>
 
+#include "audio_metrics.h"
+#include "framed_format.h"
 #include "log_format.h"
 #include "logger.h"
 #include "sample_format.h"
@@ -35,6 +38,62 @@ constexpr int kSqueezedBackPressure = 50;
 // this: it is only the resolution of the stall watchdog and of noticing that a
 // worker has finished.
 constexpr std::chrono::milliseconds kControlPollInterval{50};
+
+// How often a framed stream's losses are mentioned in the log while they keep
+// coming. The first is said at once; after that, one line at most this often,
+// carrying how many there have been since the last.
+constexpr std::chrono::seconds kSyncLossLogInterval{5};
+
+// Hexadecimal, for the 48-bit counter values a framed fault reports: the
+// counter is a bit pattern spread across samples, and it is read as one.
+std::string Hex(uint64_t value) {
+  constexpr const char* kDigits = "0123456789ABCDEF";
+  std::string text;
+  do {
+    text.insert(text.begin(), kDigits[value & 0xF]);
+    value >>= 4;
+  } while (value != 0);
+  return "0x" + text;
+}
+
+// What a framed fault means, in a sentence for the user and the log.
+//
+// The two kinds have different shapes. A sync pattern out of place says samples
+// went missing inside a frame, so the framing slipped; a counter that jumped
+// with the sync still in place says a whole number of frames went, and how many
+// is the jump over the 58 values a frame carries.
+std::string DescribeFramedFault(const FramedStreamValidator::Fault& fault,
+                                uint64_t buffer_index) {
+  std::string detail = "Framed stream ";
+
+  if (fault.kind == FramedFault::kSyncPattern) {
+    detail += "sync pattern missing " + std::to_string(fault.sample_index) +
+              " samples into buffer " + std::to_string(buffer_index) +
+              ", at position " + std::to_string(fault.frame_position) +
+              " of its frame: expected " + std::to_string(fault.expected) +
+              ", got " + std::to_string(fault.actual) +
+              ". Samples inside the frame before it are missing";
+    return detail;
+  }
+
+  detail += "counter discontinuity " + std::to_string(fault.sample_index) +
+            " samples into buffer " + std::to_string(buffer_index) +
+            ": expected " + Hex(fault.expected) + ", got " + Hex(fault.actual) +
+            ". ";
+
+  const uint64_t jump = (fault.actual - fault.expected) & kFrameCounterMask;
+  if (jump % kCounterValuesPerFrame == 0) {
+    const uint64_t frames = jump / kCounterValuesPerFrame;
+    detail += "The framing held, so " + std::to_string(frames) +
+              " whole frames (" + std::to_string(frames * kFrameSamples) +
+              " samples) are missing";
+  } else {
+    detail +=
+        "The jump is not a whole number of frames, so samples are "
+        "missing and the framing has slipped";
+  }
+  return detail;
+}
 
 }  // namespace
 
@@ -88,8 +147,14 @@ bool CapturePipeline::Start(ISampleSource* source,
   options_ = options;
   source_ = source;
   sink_ = std::move(sink);
-  validator_.Reset();
+  validator_.Reset(StreamValidator::Options{
+      .continue_after_sync_loss = options_.continue_after_dropped_samples});
   metrics_.Reset();
+  audio_metrics_.Reset();
+  last_sync_loss_ = FramedStreamValidator::Fault{};
+  last_sync_loss_buffer_ = 0;
+  stream_format_logged_ = false;
+  sync_losses_logged_ = 0;
   test_pattern_verifier_ = TestPatternVerifier{};
   test_pattern_result_ = TestPatternVerifier::Result{};
   test_pattern_checked_ = false;
@@ -285,6 +350,8 @@ void CapturePipeline::LogStartDetail() {
 
   logger_->Debug(
       std::string("Options: test mode ") + (options_.test_mode ? "on" : "off") +
+      ", continue after dropped samples " +
+      (options_.continue_after_dropped_samples ? "on" : "off") +
       ", memory locking " + (options_.lock_memory ? "on" : "off") +
       ", priority elevation " + (options_.elevate_priority ? "on" : "off") +
       ", stall timeout " + std::to_string(options_.stall_timeout.count()) +
@@ -423,6 +490,38 @@ void CapturePipeline::LogStopDetail() {
       std::to_string(stats.metrics.clipped_high_count) + "; sequence " +
       SequenceStateName(stats.sequence_state));
 
+  // What the stream carried, and the audio in it when there was any. The
+  // levels are the whole run's; what reached each audio file is said when the
+  // file closes.
+  if (stats.stream_format == StreamFormat::kFramed) {
+    std::string line =
+        "Framed stream: " + std::to_string(stats.sync_losses) +
+        " sync losses, audio at " +
+        FormatDecimal(FramedAudioSampleRateHz(options_.sample_rate_hz), 1) +
+        " Hz";
+    const auto describe = [&line](const char* name, const AudioLevel& level,
+                                  int32_t full_scale) {
+      if (!level.measured) {
+        return;
+      }
+      line +=
+          std::string("; ") + name + " " + std::to_string(level.frames) +
+          " frames, range " + std::to_string(level.minimum) + " to " +
+          std::to_string(level.maximum) + ", peak " +
+          (level.peak == 0
+               ? std::string("silent")
+               : FormatDecimal(DecibelsFullScale(level.peak, full_scale), 1) +
+                     " dBFS") +
+          ", " + std::to_string(level.clipped) + " clipped";
+    };
+    describe("integrated", stats.audio.integrated, kIntegratedAudioFullScale);
+    describe("external", stats.audio.external, kExternalAudioFullScale);
+    logger_->Debug(line);
+  } else {
+    logger_->Debug(std::string("Stream format: ") +
+                   StreamFormatName(stats.stream_format));
+  }
+
   if (stats.test_pattern_checked) {
     logger_->Debug(
         std::string("Test pattern: ") +
@@ -430,6 +529,54 @@ void CapturePipeline::LogStopDetail() {
         std::to_string(test_pattern_result_.samples_checked) +
         " samples checked");
   }
+}
+
+void CapturePipeline::LogStreamEvents(bool flush) {
+  if (logger_ == nullptr) {
+    return;
+  }
+
+  const CaptureStats stats = stats_.Read();
+
+  if (!stream_format_logged_ &&
+      stats.stream_format != StreamFormat::kUndetermined) {
+    stream_format_logged_ = true;
+    if (stats.stream_format == StreamFormat::kFramed) {
+      logger_->Info(
+          "The stream is framed: validating its sync patterns and counter, "
+          "with audio at " +
+          FormatDecimal(FramedAudioSampleRateHz(options_.sample_rate_hz), 1) +
+          " Hz" +
+          (options_.continue_after_dropped_samples
+               ? ", carrying on past any samples it loses"
+               : ""));
+    } else {
+      logger_->Info(
+          "The stream carries the sequence counter, so it has no audio in it");
+    }
+  }
+
+  if (stats.sync_losses == sync_losses_logged_) {
+    return;
+  }
+
+  // The first loss at once and in full, because it is the one that says
+  // something has gone wrong. After that, a count at most every few seconds.
+  const auto now = std::chrono::steady_clock::now();
+  if (!flush && sync_losses_logged_ != 0 &&
+      now - sync_losses_logged_at_ < kSyncLossLogInterval) {
+    return;
+  }
+
+  const uint64_t since = stats.sync_losses - sync_losses_logged_;
+  sync_losses_logged_ = stats.sync_losses;
+  sync_losses_logged_at_ = now;
+
+  logger_->Warning(
+      "The stream lost samples and was resynchronised (" +
+      std::to_string(since) + " since the last report, " +
+      std::to_string(stats.sync_losses) + " in all). The most recent: " +
+      DescribeFramedFault(stats.last_sync_loss, stats.last_sync_loss_buffer));
 }
 
 void CapturePipeline::PerformPendingSinkChange() {
@@ -648,6 +795,13 @@ void CapturePipeline::PublishStats() {
   }
 
   stats.sequence_state = validator_.state();
+  stats.stream_format = validator_.format();
+  stats.sync_losses = validator_.sync_losses();
+  stats.last_sync_loss = last_sync_loss_;
+  stats.last_sync_loss_buffer = last_sync_loss_buffer_;
+  stats.audio = audio_metrics_.Snapshot();
+  stats.audio_written =
+      (sink_ != nullptr) ? sink_->AudioWritten() : AudioWriteSummary{};
   stats.test_pattern_checked = test_pattern_checked_;
   stats.test_pattern_passed = !test_pattern_verifier_.HasFailed();
   stats.metrics = metrics_.Snapshot();
@@ -771,9 +925,28 @@ void CapturePipeline::ProcessingThread() {
 
     uint8_t* const data = ring_->SlotData(slot_index);
 
-    const SequenceValidator::Outcome outcome =
+    const StreamValidator::Outcome outcome =
         validator_.Process(data, slot_bytes);
     metrics_.Accumulate(outcome.tally);
+    audio_metrics_.Accumulate(validator_.audio());
+
+    if (outcome.framed.sync_losses > 0) {
+      last_sync_loss_ = outcome.framed.first_fault;
+      last_sync_loss_buffer_ = buffers_processed_.load();
+    }
+
+    if (!outcome.ok && outcome.format == StreamFormat::kFramed) {
+      // The framed stream's own account of the break, in the same shape as the
+      // sequence counter's below: what was expected, what arrived, and what
+      // that says about how much is missing.
+      LatchResult(TransferResult::kSequenceMismatch,
+                  DescribeFramedFault(outcome.framed.first_fault,
+                                      buffers_processed_.load()) +
+                      ". To keep capturing past a loss like this, turn on "
+                      "continuing after dropped samples");
+      ring_->MarkSlotFree(slot_index);
+      break;
+    }
 
     if (!outcome.ok) {
       // The counters alone say a capture is not bit-perfect. What follows
@@ -782,13 +955,14 @@ void CapturePipeline::ProcessingThread() {
       // it was taken and what the buffer opened with. A lock at sample 1 is
       // the buffer head disagreeing with itself rather than the stream having
       // a hole in it, and the two have nothing in common but the message.
+      const SequenceValidator::Outcome& sequence = outcome.sequence;
       std::string detail =
           "Sequence counter mismatch " +
-          std::to_string(outcome.mismatch_sample_index) +
+          std::to_string(sequence.mismatch_sample_index) +
           " samples into buffer " + std::to_string(buffers_processed_.load()) +
-          ": expected " + std::to_string(outcome.expected_counter) + ", got " +
-          std::to_string(outcome.actual_counter) + ". ";
-      if (outcome.samples_expected_remaining == 0) {
+          ": expected " + std::to_string(sequence.expected_counter) + ", got " +
+          std::to_string(sequence.actual_counter) + ". ";
+      if (sequence.samples_expected_remaining == 0) {
         // The run reached its full length and then went wrong anyway, so what
         // is missing is a whole number of counter blocks rather than a piece
         // of one — which is what a lost transfer looks like.
@@ -797,14 +971,23 @@ void CapturePipeline::ProcessingThread() {
             "boundary, so whole blocks of samples are missing";
       } else {
         detail += "The counter advanced " +
-                  std::to_string(outcome.samples_expected_remaining) +
+                  std::to_string(sequence.samples_expected_remaining) +
                   " samples early";
       }
-      if (outcome.synchronised_here) {
+      if (sequence.synchronised_here) {
         detail += ", and the validator locked on at sample " +
-                  std::to_string(outcome.synchronisation_sample_index) +
+                  std::to_string(sequence.synchronisation_sample_index) +
                   " of this buffer, which opened on counter " +
-                  std::to_string(outcome.first_counter);
+                  std::to_string(sequence.first_counter);
+      }
+      if (outcome.detection.sync_seen) {
+        // A framed sync pattern that did not repeat as it should have. The
+        // stream was handed to this validator because it could not be
+        // confirmed as framed, and this is the clue that it may have been.
+        detail +=
+            ". The buffer also carried a framed-format sync pattern that "
+            "did not repeat 512 samples later, so this may be framed gateware "
+            "whose opening frames were damaged";
       }
       LatchResult(TransferResult::kSequenceMismatch, detail);
       ring_->MarkSlotFree(slot_index);
@@ -834,6 +1017,15 @@ void CapturePipeline::ProcessingThread() {
     }
 
     if (sink_ != nullptr && !sink_->Write(data, samples_per_slot)) {
+      LatchResult(TransferResult::kFileWriteError, sink_->LastError());
+      ring_->MarkSlotFree(slot_index);
+      break;
+    }
+
+    // The audio this buffer completed goes to the same sink as the samples it
+    // came out of, so a file and its audio start and stop at the same buffer.
+    if (sink_ != nullptr && !validator_.audio().empty() &&
+        !sink_->WriteAudio(validator_.audio())) {
       LatchResult(TransferResult::kFileWriteError, sink_->LastError());
       ring_->MarkSlotFree(slot_index);
       break;
@@ -882,6 +1074,8 @@ void CapturePipeline::ControlThread() {
         LogProgress();
       }
     }
+
+    LogStreamEvents(false);
 
     // The stall watchdog. A device that stops delivering without ever failing a
     // transfer is invisible to every other check here: no error is raised, no
@@ -953,6 +1147,7 @@ void CapturePipeline::ControlThread() {
   }
 
   PublishStats();
+  LogStreamEvents(true);
   running_ = false;
 
   if (logger_ != nullptr) {
@@ -977,6 +1172,17 @@ void CapturePipeline::ControlThread() {
           std::to_string(final_stats.device_overflow_events) + " overflows, " +
           std::to_string(final_stats.device_dropped_words) +
           " samples dropped");
+    }
+
+    // What the stream was, and for a framed one whether it lost anything it
+    // was allowed to carry on past — the figure that says a capture which
+    // "succeeded" has a hole in it.
+    if (final_stats.stream_format == StreamFormat::kFramed) {
+      logger_->Info("Framed stream: " +
+                    std::to_string(final_stats.sync_losses) + " sync losses" +
+                    (final_stats.sync_losses > 0
+                         ? ", each a place where samples are missing"
+                         : ""));
     }
 
     // And the developer's account of the same run, which is several lines and

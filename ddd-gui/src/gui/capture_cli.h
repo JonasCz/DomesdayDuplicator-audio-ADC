@@ -15,6 +15,7 @@
 #include <QString>
 #include <optional>
 
+#include "audio_sink.h"
 #include "capture_format.h"
 #include "capture_settings.h"
 
@@ -66,6 +67,8 @@ struct CaptureCliOptionSet {
   QCommandLineOption sample_rate;
   QCommandLineOption duration_limit;
   QCommandLineOption output_format;
+  QCommandLineOption audio_source;
+  QCommandLineOption on_dropped_samples;
 };
 
 // Add them to a parser, and hand back the set to read the values out of.
@@ -93,6 +96,11 @@ struct CaptureCliOptions {
 
   std::optional<int> duration_limit_seconds;
   std::optional<capture::CaptureOutputFormat> output_format;
+
+  // Which audio converters to record, and whether a framed stream that loses
+  // samples carries on. Both as the settings file spells them.
+  std::optional<capture::AudioSource> audio_source;
+  std::optional<bool> continue_after_dropped_samples;
 
   // Whether anything about the capture itself was named. An attribute given
   // with no start command is not an error: it populates the window, which is

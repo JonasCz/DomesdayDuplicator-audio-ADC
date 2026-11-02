@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "capture_pipeline.h"
+#include "framed_format.h"
 #include "logger.h"
 #include "recording_sink.h"
 #include "synthetic_source.h"
@@ -381,6 +382,174 @@ TEST_F(CapturePipelineTest, DiscardedStartupSlotsNeverReachTheSink) {
   EXPECT_EQ(outcome.result, TransferResult::kSuccess);
   EXPECT_EQ(sink_view->SamplesWritten(), 10U * kTestSlotSamples)
       << "the discarded slots must not be counted as delivered";
+}
+
+// --- Framed streams ---------------------------------------------------------
+
+SyntheticSource::Options FramedSourceOptions() {
+  SyntheticSource::Options options = BaseSourceOptions();
+  options.framed = true;
+  return options;
+}
+
+TEST_F(CapturePipelineTest, AFramedStreamIsRecognisedAndValidated) {
+  SyntheticSource::Options source_options = FramedSourceOptions();
+  source_options.slot_limit = 12;
+  SyntheticSource source(source_options);
+
+  CapturePipeline pipeline(&logger_);
+  ASSERT_TRUE(pipeline.Start(&source, std::make_unique<NullSink>(),
+                             BasePipelineOptions()));
+
+  const RunResult outcome = RunToCompletion(pipeline);
+  EXPECT_EQ(outcome.result, TransferResult::kSuccess);
+  EXPECT_EQ(outcome.stats.stream_format, StreamFormat::kFramed);
+  EXPECT_EQ(outcome.stats.sequence_state, SequenceState::kRunning);
+  EXPECT_EQ(outcome.stats.sync_losses, 0U);
+
+  // A slot of 256 frames, the source starting on a frame boundary: every frame
+  // is whole, and every one of them carries audio.
+  EXPECT_EQ(outcome.stats.audio.integrated.frames,
+            12U * kTestSlotSamples / kFrameSamples);
+  EXPECT_TRUE(outcome.stats.audio.external.measured);
+  EXPECT_TRUE(LogContains("The stream is framed"));
+}
+
+TEST_F(CapturePipelineTest, ASequenceCounterStreamHasNoAudio) {
+  SyntheticSource::Options source_options = BaseSourceOptions();
+  source_options.slot_limit = 8;
+  SyntheticSource source(source_options);
+
+  auto sink = std::make_unique<test::RecordingSink>();
+  test::RecordingSink* const sink_view = sink.get();
+
+  CapturePipeline pipeline(&logger_);
+  ASSERT_TRUE(pipeline.Start(&source, std::move(sink), BasePipelineOptions()));
+
+  const RunResult outcome = RunToCompletion(pipeline);
+  EXPECT_EQ(outcome.result, TransferResult::kSuccess);
+  EXPECT_EQ(outcome.stats.stream_format, StreamFormat::kSequenceCounter);
+  EXPECT_FALSE(outcome.stats.audio.integrated.measured);
+  EXPECT_TRUE(sink_view->audio().empty());
+  EXPECT_TRUE(LogContains("sequence counter, so it has no audio"));
+}
+
+TEST_F(CapturePipelineTest, TheAudioReachesTheSinkWithTheBufferItCameFrom) {
+  SyntheticSource::Options source_options = FramedSourceOptions();
+  source_options.slot_limit = 6;
+  SyntheticSource source(source_options);
+
+  auto sink = std::make_unique<test::RecordingSink>();
+  test::RecordingSink* const sink_view = sink.get();
+
+  CapturePipeline pipeline(&logger_);
+  ASSERT_TRUE(pipeline.Start(&source, std::move(sink), BasePipelineOptions()));
+  ASSERT_EQ(RunToCompletion(pipeline).result, TransferResult::kSuccess);
+
+  // One audio write after each buffer's own write, and every frame the source
+  // generated, in order and bit for bit.
+  ASSERT_EQ(sink_view->audio_after_write().size(), 6U);
+  for (size_t call = 0; call < 6; ++call) {
+    EXPECT_EQ(sink_view->audio_after_write()[call], call + 1);
+  }
+
+  const std::vector<AudioFrame>& audio = sink_view->audio();
+  ASSERT_EQ(audio.size(), 6U * kTestSlotSamples / kFrameSamples);
+  for (size_t index = 0; index < audio.size(); ++index) {
+    const AudioFrame expected = SyntheticSource::AudioFor(index);
+    ASSERT_EQ(audio[index].integrated_left, expected.integrated_left) << index;
+    ASSERT_EQ(audio[index].integrated_right, expected.integrated_right);
+    ASSERT_EQ(audio[index].external_left, expected.external_left);
+    ASSERT_EQ(audio[index].external_right, expected.external_right);
+  }
+
+  // And the RF is the ramp, stripped of its framing, as for any stream.
+  ASSERT_EQ(sink_view->values().size(), 6U * kTestSlotSamples);
+  for (size_t index = 0; index < sink_view->values().size(); ++index) {
+    ASSERT_EQ(sink_view->values()[index], index % SyntheticSource::kRampLength)
+        << index;
+  }
+}
+
+TEST_F(CapturePipelineTest, AFramedLossStopsTheCaptureByDefault) {
+  SyntheticSource::Options source_options = FramedSourceOptions();
+  source_options.fault = SyntheticSource::Fault::kSequenceBreak;
+  source_options.fault_at_slot = 3;
+  SyntheticSource source(source_options);
+
+  CapturePipeline pipeline(&logger_);
+  ASSERT_TRUE(pipeline.Start(&source, std::make_unique<NullSink>(),
+                             BasePipelineOptions()));
+
+  const RunResult outcome = RunToCompletion(pipeline);
+  EXPECT_EQ(outcome.result, TransferResult::kSequenceMismatch);
+  EXPECT_EQ(outcome.stats.sequence_state, SequenceState::kFailed);
+  EXPECT_NE(pipeline.ResultDetail().find("Framed stream"), std::string::npos)
+      << pipeline.ResultDetail();
+  EXPECT_NE(pipeline.ResultDetail().find("continuing after dropped samples"),
+            std::string::npos);
+}
+
+TEST_F(CapturePipelineTest, AFramedLossIsCountedAndSurvivedWhenAskedTo) {
+  SyntheticSource::Options source_options = FramedSourceOptions();
+  source_options.fault = SyntheticSource::Fault::kSequenceBreak;
+  source_options.fault_at_slot = 3;
+  source_options.slot_limit = 10;
+  SyntheticSource source(source_options);
+
+  CapturePipeline::Options options = BasePipelineOptions();
+  options.continue_after_dropped_samples = true;
+
+  CapturePipeline pipeline(&logger_);
+  ASSERT_TRUE(pipeline.Start(&source, std::make_unique<NullSink>(), options));
+
+  const RunResult outcome = RunToCompletion(pipeline);
+  EXPECT_EQ(outcome.result, TransferResult::kSuccess);
+  EXPECT_EQ(outcome.stats.buffers_processed, 10U);
+  EXPECT_EQ(outcome.stats.sync_losses, 1U);
+  EXPECT_EQ(outcome.stats.sequence_state, SequenceState::kResynchronised);
+  EXPECT_EQ(outcome.stats.last_sync_loss_buffer, 4U);
+  EXPECT_NE(outcome.stats.last_sync_loss.kind, FramedFault::kNone);
+  EXPECT_TRUE(LogContains("lost samples and was resynchronised"));
+  EXPECT_TRUE(LogContains("Framed stream: 1 sync losses"));
+}
+
+TEST_F(CapturePipelineTest, ContinuingChangesNothingForASequenceCounterStream) {
+  // A sequence-counter stream fails on its first mismatch whatever the
+  // setting says: the setting is the framed format's, and the original
+  // gateware's stream is validated exactly as it always was.
+  SyntheticSource::Options source_options = BaseSourceOptions();
+  source_options.fault = SyntheticSource::Fault::kSequenceBreak;
+  source_options.fault_at_slot = 3;
+  SyntheticSource source(source_options);
+
+  CapturePipeline::Options options = BasePipelineOptions();
+  options.continue_after_dropped_samples = true;
+
+  CapturePipeline pipeline(&logger_);
+  ASSERT_TRUE(pipeline.Start(&source, std::make_unique<NullSink>(), options));
+
+  const RunResult outcome = RunToCompletion(pipeline);
+  EXPECT_EQ(outcome.result, TransferResult::kSequenceMismatch);
+  EXPECT_NE(pipeline.ResultDetail().find("Sequence counter mismatch"),
+            std::string::npos);
+}
+
+TEST_F(CapturePipelineTest, AFramedTestCaptureStillChecksTheRamp) {
+  SyntheticSource::Options source_options = FramedSourceOptions();
+  source_options.slot_limit = 10;
+  SyntheticSource source(source_options);
+
+  CapturePipeline::Options options = BasePipelineOptions();
+  options.test_mode = true;
+
+  CapturePipeline pipeline(&logger_);
+  ASSERT_TRUE(pipeline.Start(&source, std::make_unique<NullSink>(), options));
+
+  const RunResult outcome = RunToCompletion(pipeline);
+  EXPECT_EQ(outcome.result, TransferResult::kSuccess);
+  EXPECT_TRUE(outcome.stats.test_pattern_passed);
+  EXPECT_TRUE(pipeline.test_pattern_result().passed);
 }
 
 // --- Injected faults -------------------------------------------------------

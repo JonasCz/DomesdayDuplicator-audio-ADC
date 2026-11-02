@@ -11,6 +11,7 @@
 
 #include "capture_metadata.h"
 
+#include <cmath>
 #include <fstream>
 
 #include "capture_format.h"
@@ -95,6 +96,55 @@ void WriteFact(YamlWriter& yaml, const char* key, const ScannedFact& fact) {
   yaml.String("value", fact.value);
   yaml.StringIfPresent("source", fact.source);
   yaml.EndMapping();
+}
+
+void WriteAudioFile(YamlWriter& yaml, const char* key,
+                    const AudioFileRecord& file) {
+  if (!file.present()) {
+    return;
+  }
+
+  yaml.BeginMapping(key);
+  yaml.String("file", file.file_name);
+  yaml.StringIfPresent("converter", file.converter);
+  yaml.StringIfPresent("encoding", file.encoding);
+  yaml.Unsigned("channels", file.channels);
+  yaml.Unsigned("bits_per_sample", file.bits_per_sample);
+
+  // Whole where it is whole, so the ordinary case reads as the integer it is.
+  if (file.sample_rate_hz ==
+      static_cast<double>(static_cast<uint64_t>(file.sample_rate_hz))) {
+    yaml.Unsigned("sample_rate_hz", static_cast<uint64_t>(file.sample_rate_hz));
+  } else {
+    yaml.Number("sample_rate_hz", file.sample_rate_hz, 1);
+  }
+
+  yaml.Unsigned("samples", file.samples);
+  yaml.Unsigned("bytes", file.bytes);
+  yaml.Unsigned("clipped_samples", file.clipped_samples);
+  if (file.peak > 0 && file.full_scale > 0) {
+    yaml.Number("peak_dbfs",
+                20.0 * std::log10(static_cast<double>(file.peak) /
+                                  static_cast<double>(file.full_scale)),
+                1);
+  }
+  yaml.EndMapping();
+}
+
+void WriteAudio(YamlWriter& yaml, const AudioRecording& audio) {
+  if (audio.requested.empty()) {
+    return;
+  }
+
+  yaml.Comment("The audio files are headerless: their layout and rate are");
+  yaml.Comment("recorded here and nowhere else.");
+  yaml.BeginMapping("audio");
+  yaml.String("requested", audio.requested);
+  yaml.StringIfPresent("not_recorded", audio.not_recorded);
+  WriteAudioFile(yaml, "integrated_adc", audio.integrated);
+  WriteAudioFile(yaml, "external_adc", audio.external);
+  yaml.EndMapping();
+  yaml.BlankLine();
 }
 
 void WriteNaming(YamlWriter& yaml, const CaptureNamingFields& naming) {
@@ -256,6 +306,10 @@ std::string BuildCaptureMetadataYaml(const CaptureMetadata& metadata) {
   yaml.Boolean("completed", metadata.outcome.completed);
   yaml.StringIfPresent("detail", metadata.outcome.detail);
   yaml.StringIfPresent("sequence_check", metadata.outcome.sequence_check);
+  yaml.StringIfPresent("stream_format", metadata.stream_format);
+  if (metadata.outcome.sync_losses_counted) {
+    yaml.Unsigned("sync_losses", metadata.outcome.sync_losses);
+  }
   yaml.Unsigned("device_overflow_events",
                 metadata.outcome.device_overflow_events);
   yaml.Unsigned("device_dropped_words", metadata.outcome.device_dropped_words);
@@ -276,6 +330,8 @@ std::string BuildCaptureMetadataYaml(const CaptureMetadata& metadata) {
     yaml.EndMapping();
     yaml.BlankLine();
   }
+
+  WriteAudio(yaml, metadata.audio);
 
   WriteNaming(yaml, metadata.naming);
   yaml.BlankLine();

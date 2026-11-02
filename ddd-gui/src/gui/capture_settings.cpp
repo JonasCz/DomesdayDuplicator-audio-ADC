@@ -16,6 +16,7 @@
 #include <QStandardPaths>
 #include <algorithm>
 
+#include "framed_format.h"
 #include "sample_format.h"
 
 namespace ddd::gui {
@@ -33,6 +34,9 @@ constexpr const char* kDecimationFactorKey = "capture/decimation_factor";
 constexpr const char* kCompressionLevelKey = "capture/compression_level";
 constexpr const char* kDurationLimitKey = "capture/duration_limit_seconds";
 constexpr const char* kLowSpaceKey = "capture/low_space_warning_minutes";
+constexpr const char* kAudioSourceKey = "capture/audio_source";
+constexpr const char* kContinueAfterDroppedKey =
+    "capture/continue_after_dropped_samples";
 
 // The naming fields. Their own group, so that a settings file stays readable
 // and so that clearing them is one group to remove by hand.
@@ -264,7 +268,20 @@ double CaptureSettings::EstimatedBytesPerSecond() const {
           ? static_cast<double>(capture::kWireBytesPerSecond)
           : capture::kEstimatedCaptureBytesPerSecond;
 
-  return undecimated / static_cast<double>(decimation_factor);
+  // The audio rate follows the stream's, so decimating halves it too.
+  const double audio_frames_per_second =
+      capture::FramedAudioSampleRateHz(SampleRateHz());
+  double audio = 0.0;
+  if (capture::RecordsIntegratedAudio(audio_source)) {
+    audio += audio_frames_per_second *
+             static_cast<double>(capture::kIntegratedAudioBytesPerFrame);
+  }
+  if (capture::RecordsExternalAudio(audio_source)) {
+    audio += audio_frames_per_second *
+             static_cast<double>(capture::kExternalAudioBytesPerFrame);
+  }
+
+  return (undecimated / static_cast<double>(decimation_factor)) + audio;
 }
 
 QString DefaultCaptureDirectory() {
@@ -372,6 +389,26 @@ CaptureSettings LoadCaptureSettings() {
           .toInt(),
       0, CaptureSettings::kMaximumLowSpaceWarningMinutes);
 
+  // Stored as a word, like the output format, and read as "none" unless it is
+  // one this build knows: a settings file naming a source that does not exist
+  // here should produce a capture, and the one that cannot surprise anybody is
+  // the one with no audio files beside it.
+  loaded.audio_source =
+      capture::AudioSourceFromName(
+          settings
+              .value(
+                  QLatin1String(kAudioSourceKey),
+                  QLatin1String(capture::AudioSourceName(loaded.audio_source)))
+              .toString()
+              .toStdString())
+          .value_or(capture::AudioSource::kNone);
+
+  loaded.continue_after_dropped_samples =
+      settings
+          .value(QLatin1String(kContinueAfterDroppedKey),
+                 loaded.continue_after_dropped_samples)
+          .toBool();
+
   return loaded;
 }
 
@@ -400,6 +437,11 @@ void SaveCaptureSettings(const CaptureSettings& settings) {
                  settings.duration_limit_seconds);
   store.setValue(QLatin1String(kLowSpaceKey),
                  settings.low_space_warning_minutes);
+  store.setValue(
+      QLatin1String(kAudioSourceKey),
+      QLatin1String(capture::AudioSourceName(settings.audio_source)));
+  store.setValue(QLatin1String(kContinueAfterDroppedKey),
+                 settings.continue_after_dropped_samples);
 }
 
 }  // namespace ddd::gui

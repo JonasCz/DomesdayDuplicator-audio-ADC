@@ -208,6 +208,56 @@ QWidget* SettingsDialog::BuildCapturePage(
          "and never whether clipping is detected."));
   form->addRow(tr("Front-end gain"), front_end_gain_);
 
+  // The audio gateware's two converters. Offered whatever gateware is attached,
+  // because which gateware that is cannot be known until a stream has been
+  // looked at — and asking for audio from gateware that has none is harmless:
+  // the capture goes ahead without it and says why.
+  audio_source_ = new QComboBox(page);
+  audio_source_->setObjectName(QLatin1String(kAudioSourceComboName));
+  const struct {
+    ddd::capture::AudioSource source;
+    const char* label;
+  } kAudioChoices[] = {
+      {ddd::capture::AudioSource::kNone, "None"},
+      {ddd::capture::AudioSource::kIntegrated,
+       "Integrated converter (ADC128S022, 12-bit)"},
+      {ddd::capture::AudioSource::kExternal,
+       "External converter (PCM1802, 24-bit)"},
+      {ddd::capture::AudioSource::kBoth, "Both converters"},
+  };
+  for (const auto& choice : kAudioChoices) {
+    audio_source_->addItem(
+        tr(choice.label),
+        QLatin1String(ddd::capture::AudioSourceName(choice.source)));
+    if (choice.source == capture_.audio_source) {
+      audio_source_->setCurrentIndex(audio_source_->count() - 1);
+    }
+  }
+  audio_source_->setToolTip(
+      tr("Gateware with audio support sends a stereo sample from each of the "
+         "board's audio converters in every 512 RF samples — 78,125 Hz, or "
+         "39,062.5 Hz at 20 Msps. The ones chosen here are written beside the "
+         "capture as headerless stereo files: the integrated converter as "
+         "signed 16-bit (_audio_integrated_adc.s16), the external one as "
+         "signed 24-bit (_audio_external_adc.s24). The rate is recorded in "
+         "the capture's metadata file. Gateware without audio support captures "
+         "as before, with no audio files."));
+  form->addRow(tr("Audio"), audio_source_);
+
+  continue_after_dropped_ =
+      new QCheckBox(tr("Continue after dropped samples"), page);
+  continue_after_dropped_->setObjectName(
+      QLatin1String(kContinueAfterDroppedCheckName));
+  continue_after_dropped_->setChecked(capture_.continue_after_dropped_samples);
+  continue_after_dropped_->setToolTip(
+      tr("Off by default, so a capture that has lost samples stops and says "
+         "so. On, a stream from audio gateware that loses samples is picked "
+         "up again at its next frame and the capture carries on with a hole "
+         "in it; every loss is counted in the Statistics panel, the log and "
+         "the metadata file. Gateware without audio support always stops on "
+         "a lost sample."));
+  form->addRow(QString(), continue_after_dropped_);
+
   layout->addLayout(form);
 
   // The distinction matters and is worth the sentence: the buffer and transfer
@@ -215,9 +265,10 @@ QWidget* SettingsDialog::BuildCapturePage(
   // until the next one, while the gain declaration only changes what a number
   // is labelled and takes effect immediately.
   auto* note = new QLabel(
-      tr("The buffer and transfer settings apply to the next capture. The "
-         "front-end gain applies at once, including to a capture already "
-         "running."),
+      tr("The buffer, transfer and audio settings apply to the next capture, "
+         "and continuing after dropped samples to the next time monitoring "
+         "starts. The front-end gain applies at once, including to a capture "
+         "already running."),
       page);
   note->setWordWrap(true);
   note->setForegroundRole(QPalette::PlaceholderText);
@@ -372,6 +423,11 @@ CaptureSettings SettingsDialog::Settings() const {
   result.capture_directory = directory_->text();
   result.front_end_gain_switches =
       static_cast<uint8_t>(front_end_gain_->currentData().toUInt() & 0xFFU);
+  result.audio_source =
+      ddd::capture::AudioSourceFromName(
+          audio_source_->currentData().toString().toStdString())
+          .value_or(ddd::capture::AudioSource::kNone);
+  result.continue_after_dropped_samples = continue_after_dropped_->isChecked();
   return result;
 }
 

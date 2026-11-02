@@ -36,6 +36,8 @@ endif()
 
 add_library(ddd_capture STATIC
     ${ddd_capture_usb_sources}
+    audio_metrics.cpp
+    audio_sink.cpp
     boot_image.cpp
     capture_format.cpp
     capture_metadata.cpp
@@ -55,6 +57,7 @@ add_library(ddd_capture STATIC
     fpga_telemetry.cpp
     fpga_version.cpp
     flac_writer.cpp
+    framed_stream_validator.cpp
     free_space.cpp
     jtag_cli.cpp
     json_value.cpp
@@ -70,6 +73,7 @@ add_library(ddd_capture STATIC
     sample_sink.cpp
     sequence_validator.cpp
     spdlog_logger.cpp
+    stream_validator.cpp
     sysfs_device_list.cpp
     svf_player.cpp
     synthetic_source.cpp

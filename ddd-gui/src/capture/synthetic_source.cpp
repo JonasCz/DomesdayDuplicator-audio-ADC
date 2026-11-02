@@ -60,6 +60,10 @@ TransferResult SyntheticSource::Prepare(const DiskBufferRing& /*ring*/) {
   sequence_counter_ = 0;
   samples_until_counter_increment_ = kSamplesPerSequenceCounter;
   sine_phase_samples_ = 0;
+  frame_position_ = 0;
+  frame_index_ = 0;
+  framed_counter_ = options_.framed_counter_start & kFrameCounterMask;
+  frame_audio_ = AudioFor(0);
   slots_generated_ = 0;
   slots_delivered_ = 0;
   have_first_delivered_sample_ = false;
@@ -69,26 +73,130 @@ TransferResult SyntheticSource::Prepare(const DiskBufferRing& /*ring*/) {
   return TransferResult::kSuccess;
 }
 
+AudioFrame SyntheticSource::AudioFor(uint64_t frame_index) {
+  // Values that move from frame to frame and reach both rails of both
+  // converters over a few thousand frames, so a file written from them is not
+  // a constant that would survive being written wrongly.
+  AudioFrame frame;
+  frame.integrated_left =
+      static_cast<int32_t>((frame_index * 37) % 4096) - kIntegratedAudioZero;
+  frame.integrated_right =
+      static_cast<int32_t>(((frame_index * 101) + 1000) % 4096) -
+      kIntegratedAudioZero;
+  frame.external_left =
+      SignExtendExternalAudio(static_cast<uint32_t>(frame_index & 0xFFFFFF));
+  frame.external_right = SignExtendExternalAudio(
+      static_cast<uint32_t>(((frame_index * 977) + 0x800000) & 0xFFFFFF));
+  return frame;
+}
+
+uint16_t SyntheticSource::NextSampleValue() {
+  if (options_.pattern == Pattern::kRamp) {
+    const uint16_t value = ramp_value_;
+    ++ramp_value_;
+    if (ramp_value_ >= kRampLength) {
+      ramp_value_ = 0;
+    }
+    return value;
+  }
+
+  const double phase =
+      (kTwoPi * static_cast<double>(sine_phase_samples_)) / kSinePeriodSamples;
+  ++sine_phase_samples_;
+  return static_cast<uint16_t>(
+      std::clamp(kSampleZeroOffset +
+                     static_cast<int32_t>(kSineAmplitude * std::sin(phase)),
+                 static_cast<int32_t>(kMinimumSampleValue),
+                 static_cast<int32_t>(kMaximumSampleValue)));
+}
+
+uint8_t SyntheticSource::NextFramedTopBits() {
+  const size_t position = frame_position_;
+  uint8_t top = 0;
+
+  // The integrated converter goes out unsigned, with 2048 as zero; the
+  // external one as 24-bit two's complement.
+  const auto integrated = [](int32_t centred) {
+    return static_cast<uint32_t>(centred + kIntegratedAudioZero) & 0x0FFFU;
+  };
+  const auto external = [](int32_t value) {
+    return static_cast<uint32_t>(value) & 0x00FF'FFFFU;
+  };
+
+  if (position < kFrameSyncSamples) {
+    top = kSyncChunks[position];
+  } else if (position < kFrameCounterOffset) {
+    const size_t slot = position - kFrameIntegratedAudioOffset;
+    switch (slot) {
+      case 0:
+        top =
+            static_cast<uint8_t>(integrated(frame_audio_.integrated_left) >> 6);
+        break;
+      case 1:
+        top = static_cast<uint8_t>(integrated(frame_audio_.integrated_left) &
+                                   0x3F);
+        break;
+      case 2:
+        top = static_cast<uint8_t>(integrated(frame_audio_.integrated_right) >>
+                                   6);
+        break;
+      case 3:
+        top = static_cast<uint8_t>(integrated(frame_audio_.integrated_right) &
+                                   0x3F);
+        break;
+      case 6:
+      case 7:
+      case 8:
+      case 9:
+        top = static_cast<uint8_t>(
+            (external(frame_audio_.external_left) >> (6 * (9 - slot))) & 0x3F);
+        break;
+      case 10:
+      case 11:
+      case 12:
+      case 13:
+        top = static_cast<uint8_t>(
+            (external(frame_audio_.external_right) >> (6 * (13 - slot))) &
+            0x3F);
+        break;
+      default:
+        // The reserved slots, which audio-only gateware leaves at zero.
+        top = 0;
+        break;
+    }
+  } else {
+    const size_t chunk = (position - kFrameCounterOffset) % 8;
+    top = static_cast<uint8_t>((framed_counter_ >> (6 * chunk)) & 0x3F);
+    if (chunk == 7) {
+      framed_counter_ = (framed_counter_ + 1) & kFrameCounterMask;
+    }
+  }
+
+  ++frame_position_;
+  if (frame_position_ == kFrameSamples) {
+    frame_position_ = 0;
+    ++frame_index_;
+    frame_audio_ = AudioFor(frame_index_);
+  }
+
+  return top;
+}
+
 void SyntheticSource::GenerateInto(uint8_t* destination, size_t bytes) {
   const size_t sample_count = bytes / kBytesPerSample;
 
   for (size_t index = 0; index < sample_count; ++index) {
-    uint16_t value = 0;
-    if (options_.pattern == Pattern::kRamp) {
-      value = ramp_value_;
-      ++ramp_value_;
-      if (ramp_value_ >= kRampLength) {
-        ramp_value_ = 0;
-      }
-    } else {
-      const double phase = (kTwoPi * static_cast<double>(sine_phase_samples_)) /
-                           kSinePeriodSamples;
-      value = static_cast<uint16_t>(
-          std::clamp(kSampleZeroOffset +
-                         static_cast<int32_t>(kSineAmplitude * std::sin(phase)),
-                     static_cast<int32_t>(kMinimumSampleValue),
-                     static_cast<int32_t>(kMaximumSampleValue)));
-      ++sine_phase_samples_;
+    const uint16_t value = NextSampleValue();
+
+    if (options_.framed) {
+      const uint16_t word = static_cast<uint16_t>(
+          (value & kSampleValueMask) |
+          static_cast<uint16_t>(static_cast<uint16_t>(NextFramedTopBits())
+                                << kSequenceCounterShift));
+      destination[index * kBytesPerSample] = static_cast<uint8_t>(word & 0xFF);
+      destination[(index * kBytesPerSample) + 1] =
+          static_cast<uint8_t>((word >> 8) & 0xFF);
+      continue;
     }
 
     const uint16_t word = MakeWireWord(value, sequence_counter_);
@@ -221,9 +329,18 @@ TransferResult SyntheticSource::Run(DiskBufferRing& ring,
       // way the break falls at a slot boundary, which is the harder case and
       // the one a genuine dropped transfer produces.
       control.Log("Synthetic source: injecting a sequence break");
-      ++sequence_counter_;
-      if (sequence_counter_ >= kSequenceCounterValues) {
-        sequence_counter_ = 0;
+      if (options_.framed) {
+        // Generated and never delivered, which is what a lost stretch of a
+        // transfer is from the host's side.
+        for (size_t dropped = 0; dropped < kFramedBreakSamples; ++dropped) {
+          NextSampleValue();
+          NextFramedTopBits();
+        }
+      } else {
+        ++sequence_counter_;
+        if (sequence_counter_ >= kSequenceCounterValues) {
+          sequence_counter_ = 0;
+        }
       }
     }
 

@@ -100,6 +100,92 @@ TEST_F(CaptureMetadataTest, AnOrdinaryCaptureRecordsWhatItWas) {
 #endif
 }
 
+// --- The stream and its audio
+// -------------------------------------------------
+
+TEST_F(CaptureMetadataTest, AFramedCaptureSaysSoAndCountsItsLosses) {
+  CaptureMetadata metadata = Ordinary();
+  metadata.stream_format = "framed";
+  metadata.outcome.sync_losses_counted = true;
+  metadata.outcome.sync_losses = 2;
+  metadata.outcome.sequence_check = "resynchronised";
+
+  const std::string document = BuildCaptureMetadataYaml(metadata);
+  EXPECT_TRUE(Contains(document, "\"stream_format\": \"framed\""));
+  EXPECT_TRUE(Contains(document, "\"sync_losses\": 2"));
+  EXPECT_TRUE(Contains(document, "\"sequence_check\": \"resynchronised\""));
+}
+
+TEST_F(CaptureMetadataTest, ASequenceCounterCaptureCountsNoLosses) {
+  // It cannot carry on past one, so a zero would read as a check that found
+  // nothing — and the field is left out instead.
+  CaptureMetadata metadata = Ordinary();
+  metadata.stream_format = "sequence counter";
+
+  const std::string document = BuildCaptureMetadataYaml(metadata);
+  EXPECT_TRUE(Contains(document, "\"stream_format\": \"sequence counter\""));
+  EXPECT_FALSE(Contains(document, "sync_losses"));
+}
+
+TEST_F(CaptureMetadataTest, EachAudioFileIsDescribedInFull) {
+  CaptureMetadata metadata = Ordinary();
+  metadata.audio.requested = "both";
+
+  AudioFileRecord& integrated = metadata.audio.integrated;
+  integrated.file_name = "Casper_audio_integrated_adc.s16";
+  integrated.converter = "ADC128S022";
+  integrated.encoding = "signed 16-bit little-endian";
+  integrated.bits_per_sample = 16;
+  integrated.sample_rate_hz = 78'125.0;
+  integrated.samples = 4'687'500;
+  integrated.bytes = 18'750'000;
+  integrated.clipped_samples = 3;
+  integrated.peak = 1024;
+  integrated.full_scale = 2048;
+
+  AudioFileRecord& external = metadata.audio.external;
+  external.file_name = "Casper_audio_external_adc.s24";
+  external.bits_per_sample = 24;
+  external.sample_rate_hz = 39'062.5;
+
+  const std::string document = BuildCaptureMetadataYaml(metadata);
+  EXPECT_TRUE(Contains(document, "\"requested\": \"both\""));
+  EXPECT_TRUE(Contains(document, "\"integrated_adc\":")) << document;
+  EXPECT_TRUE(
+      Contains(document, "\"file\": \"Casper_audio_integrated_adc.s16\""));
+  EXPECT_TRUE(Contains(document, "\"converter\": \"ADC128S022\""));
+  EXPECT_TRUE(Contains(document, "\"channels\": 2"));
+  EXPECT_TRUE(Contains(document, "\"bits_per_sample\": 16"));
+
+  // Whole where it is whole, and with its half where it has one.
+  EXPECT_TRUE(Contains(document, "\"sample_rate_hz\": 78125")) << document;
+  EXPECT_TRUE(Contains(document, "\"sample_rate_hz\": 39062.5")) << document;
+
+  EXPECT_TRUE(Contains(document, "\"samples\": 4687500"));
+  EXPECT_TRUE(Contains(document, "\"clipped_samples\": 3"));
+  EXPECT_TRUE(Contains(document, "\"peak_dbfs\": -6.0")) << document;
+  EXPECT_TRUE(Contains(document, "\"external_adc\":"));
+}
+
+TEST_F(CaptureMetadataTest, AudioAskedForAndNotRecordedSaysWhy) {
+  CaptureMetadata metadata = Ordinary();
+  metadata.audio.requested = "integrated";
+  metadata.audio.not_recorded = "This gateware does not send audio.";
+
+  const std::string document = BuildCaptureMetadataYaml(metadata);
+  EXPECT_TRUE(Contains(document,
+                       "\"not_recorded\": \"This gateware does not send "
+                       "audio.\""))
+      << document;
+  EXPECT_FALSE(Contains(document, "integrated_adc"));
+}
+
+TEST_F(CaptureMetadataTest, NoAudioAskedForLeavesTheSectionOut) {
+  const std::string document = BuildCaptureMetadataYaml(Ordinary());
+  EXPECT_FALSE(Contains(document, "\"requested\""));
+  EXPECT_FALSE(Contains(document, "headerless"));
+}
+
 TEST_F(CaptureMetadataTest, TheTestModeFlagIsAlwaysWritten) {
   // Never left out, whichever way round it is. A capture of ramps and a capture
   // of signal are indistinguishable by inspection until somebody decodes one,

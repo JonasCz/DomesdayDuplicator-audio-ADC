@@ -27,6 +27,7 @@
 #include <thread>
 #include <vector>
 
+#include "audio_sink.h"
 #include "capture_controller.h"
 #include "capture_format.h"
 #include "capture_metadata.h"
@@ -34,6 +35,7 @@
 #include "capture_reader.h"
 #include "fake_usb_device.h"
 #include "firmware_version.h"
+#include "framed_format.h"
 #include "front_end_gain.h"
 #include "logger.h"
 #include "sample_format.h"
@@ -1270,6 +1272,319 @@ TEST_F(CaptureToDiskTest, AnUncompressedCaptureGetsTheSameMetadataFile) {
 
   controller_->StopMonitoring();
   ASSERT_TRUE(PumpUntil([&] { return !controller_->monitoring(); }));
+}
+
+// --- Audio -----------------------------------------------------------------
+
+// The audio files in the test's directory, sorted.
+std::vector<std::filesystem::path> AudioFilesIn(
+    const std::filesystem::path& directory) {
+  std::vector<std::filesystem::path> files;
+  for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+    if (entry.path().filename().string().find("_audio_") != std::string::npos) {
+      files.push_back(entry.path());
+    }
+  }
+  std::sort(files.begin(), files.end());
+  return files;
+}
+
+std::vector<uint8_t> ReadBytes(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary);
+  return std::vector<uint8_t>(std::istreambuf_iterator<char>(file),
+                              std::istreambuf_iterator<char>());
+}
+
+int32_t Signed24At(const std::vector<uint8_t>& bytes, size_t offset) {
+  const uint32_t raw = static_cast<uint32_t>(bytes[offset]) |
+                       (static_cast<uint32_t>(bytes[offset + 1]) << 8) |
+                       (static_cast<uint32_t>(bytes[offset + 2]) << 16);
+  return capture::SignExtendExternalAudio(raw);
+}
+
+int16_t Signed16At(const std::vector<uint8_t>& bytes, size_t offset) {
+  return static_cast<int16_t>(static_cast<uint16_t>(
+      static_cast<uint16_t>(bytes[offset]) |
+      static_cast<uint16_t>(static_cast<uint16_t>(bytes[offset + 1]) << 8)));
+}
+
+using SyntheticSource = capture::SyntheticSource;
+
+class AudioCaptureTest : public CaptureToDiskTest {
+ protected:
+  // At the device's real rate rather than as fast as the machine can go, for
+  // the tests where the order of things matters. Unpaced, a loaded machine can
+  // run dozens of buffers through before a capture opened in the same breath
+  // is attached, and "the loss is inside the file" or "the file was opened
+  // before the stream was looked at" would come down to the scheduler.
+  //
+  // A fault lands at buffer 100, a third of a second in; the opening slots
+  // discarded put the first buffer a tenth of a second after the device is
+  // opened.
+  static capture::SyntheticSource::Options Paced(
+      capture::SyntheticSource::Options options) {
+    options.rate_bytes_per_second = capture::kWireBytesPerSecond;
+    options.discard_slots = 30;
+    options.fault_at_slot = 100;
+    return options;
+  }
+
+  void UseFramedGateware(
+      SyntheticSource::Fault fault = SyntheticSource::Fault::kNone) {
+    capture::SyntheticSource::Options options = Paced(TestSourceOptions());
+    options.framed = true;
+    options.fault = fault;
+    device_->SetSourceOptions(options);
+  }
+
+  void UsePacedOriginalGateware() {
+    device_->SetSourceOptions(Paced(TestSourceOptions()));
+  }
+
+  // Run a monitoring session until the stream has been looked at, so a capture
+  // started now knows what it is capturing from.
+  void MonitorUntilTheFormatIsKnown() {
+    capture::StreamFormat format = capture::StreamFormat::kUndetermined;
+    const QMetaObject::Connection watch =
+        QObject::connect(controller_.get(), &CaptureController::StatsUpdated,
+                         [&format](const capture::CaptureStats& stats) {
+                           format = stats.stream_format;
+                         });
+    controller_->StartMonitoring();
+    ASSERT_TRUE(controller_->monitoring());
+    ASSERT_TRUE(PumpUntil(
+        [&] { return format != capture::StreamFormat::kUndetermined; }));
+    QObject::disconnect(watch);
+  }
+
+  void CaptureForAWhile() {
+    controller_->StartCapture();
+    ASSERT_TRUE(controller_->capturing());
+    ASSERT_TRUE(PumpUntil([&] {
+      return !WrittenFiles().empty() &&
+             std::filesystem::file_size(WrittenFiles().front()) > 65536;
+    }));
+    controller_->StopCapture();
+    ASSERT_TRUE(PumpUntil([&] { return !controller_->capturing(); }));
+    ASSERT_TRUE(PumpUntil([&] { return MetadataFiles().size() == 1U; }));
+  }
+
+  void StopTheStream() {
+    controller_->StopMonitoring();
+    ASSERT_TRUE(PumpUntil([&] { return !controller_->monitoring(); }));
+  }
+};
+
+TEST_F(AudioCaptureTest, AFramedCaptureWritesItsAudioBesideIt) {
+  UseFramedGateware();
+  Settings([](CaptureSettings& settings) {
+    settings.capture_name = QStringLiteral("Casper");
+    settings.audio_source = capture::AudioSource::kBoth;
+  });
+
+  MonitorUntilTheFormatIsKnown();
+  CaptureForAWhile();
+  StopTheStream();
+
+  const std::filesystem::path integrated =
+      directory_ / "Casper_audio_integrated_adc.s16";
+  const std::filesystem::path external =
+      directory_ / "Casper_audio_external_adc.s24";
+  ASSERT_EQ(AudioFilesIn(directory_),
+            (std::vector<std::filesystem::path>{external, integrated}));
+
+  const std::vector<uint8_t> sixteen = ReadBytes(integrated);
+  const std::vector<uint8_t> twenty_four = ReadBytes(external);
+  ASSERT_GT(sixteen.size(), 0U);
+  ASSERT_EQ(sixteen.size() % 4, 0U);
+  ASSERT_EQ(twenty_four.size() % 6, 0U);
+
+  // One stereo pair a frame in each, for the same frames.
+  const size_t frames = sixteen.size() / 4;
+  ASSERT_EQ(twenty_four.size() / 6, frames);
+
+  // The synthetic gateware's external left channel is its frame index, so the
+  // file says which frame it starts on — and from there every sample of both
+  // files is known exactly.
+  const auto first = static_cast<uint64_t>(Signed24At(twenty_four, 0));
+  for (size_t k = 0; k < frames; ++k) {
+    const capture::AudioFrame expected = SyntheticSource::AudioFor(first + k);
+    ASSERT_EQ(Signed24At(twenty_four, k * 6), expected.external_left) << k;
+    ASSERT_EQ(Signed24At(twenty_four, (k * 6) + 3), expected.external_right);
+    ASSERT_EQ(Signed16At(sixteen, k * 4), expected.integrated_left * 16) << k;
+    ASSERT_EQ(Signed16At(sixteen, (k * 4) + 2), expected.integrated_right * 16);
+  }
+
+  // The files are headerless, so the sidecar is where their rate and layout
+  // are written down.
+  const std::string document = ReadWholeFile(MetadataFiles().front());
+  EXPECT_NE(document.find("Casper_audio_integrated_adc.s16"), std::string::npos)
+      << document;
+  EXPECT_NE(document.find("Casper_audio_external_adc.s24"), std::string::npos);
+  EXPECT_NE(document.find("\"sample_rate_hz\": 78125"), std::string::npos)
+      << document;
+  EXPECT_NE(document.find("\"samples\": " + std::to_string(frames)),
+            std::string::npos);
+  EXPECT_NE(document.find("\"stream_format\": \"framed\""), std::string::npos);
+  EXPECT_NE(document.find("\"sync_losses\": 0"), std::string::npos);
+  EXPECT_TRUE(LogContains("Audio file: "));
+}
+
+TEST_F(AudioCaptureTest, AudioAskedOfGatewareWithoutItIsSaidAndNoFileIsMade) {
+  // The original gateware: the capture goes ahead exactly as it would have,
+  // and the request for audio is answered with a sentence rather than a file.
+  Settings([](CaptureSettings& settings) {
+    settings.audio_source = capture::AudioSource::kBoth;
+  });
+  QSignalSpy unavailable(controller_.get(),
+                         &CaptureController::AudioUnavailable);
+  QSignalSpy failed(controller_.get(), &CaptureController::Failed);
+
+  MonitorUntilTheFormatIsKnown();
+  CaptureForAWhile();
+  StopTheStream();
+
+  EXPECT_EQ(unavailable.count(), 1);
+  EXPECT_EQ(failed.count(), 0);
+  EXPECT_TRUE(AudioFilesIn(directory_).empty());
+  ASSERT_EQ(WrittenFiles().size(), 1U);
+
+  const std::string document = ReadWholeFile(MetadataFiles().front());
+  EXPECT_NE(document.find("\"not_recorded\""), std::string::npos) << document;
+  EXPECT_NE(document.find("\"stream_format\": \"sequence counter\""),
+            std::string::npos);
+  EXPECT_EQ(document.find("sync_losses"), std::string::npos);
+  EXPECT_TRUE(LogContains("does not send any"));
+}
+
+TEST_F(AudioCaptureTest, AudioFilesMadeBeforeTheStreamWasLookedAtGoIfUnused) {
+  // Started from idle, so the files are opened before a single buffer has
+  // been seen. The stream then turns out to have no audio in it, and they are
+  // taken away again rather than left beside the capture empty.
+  UsePacedOriginalGateware();
+  Settings([](CaptureSettings& settings) {
+    settings.audio_source = capture::AudioSource::kIntegrated;
+  });
+  QSignalSpy unavailable(controller_.get(),
+                         &CaptureController::AudioUnavailable);
+
+  CaptureForAWhile();
+  StopTheStream();
+
+  EXPECT_EQ(unavailable.count(), 1);
+  EXPECT_TRUE(AudioFilesIn(directory_).empty());
+  EXPECT_TRUE(LogContains("which the stream had no audio for"));
+}
+
+TEST_F(AudioCaptureTest, NothingIsWrittenForAudioNobodyAskedFor) {
+  UseFramedGateware();
+  QSignalSpy unavailable(controller_.get(),
+                         &CaptureController::AudioUnavailable);
+
+  MonitorUntilTheFormatIsKnown();
+  CaptureForAWhile();
+  StopTheStream();
+
+  EXPECT_TRUE(AudioFilesIn(directory_).empty());
+  EXPECT_EQ(unavailable.count(), 0);
+  const std::string document = ReadWholeFile(MetadataFiles().front());
+  EXPECT_EQ(document.find("\"requested\""), std::string::npos) << document;
+  EXPECT_EQ(document.find("integrated_adc"), std::string::npos);
+}
+
+TEST_F(AudioCaptureTest, TheAudioFollowsTheCaptureWhenItIsRenamed) {
+  UseFramedGateware();
+  Settings([](CaptureSettings& settings) {
+    settings.capture_name = QStringLiteral("Casper");
+    settings.naming.append_duration = true;
+    settings.audio_source = capture::AudioSource::kExternal;
+  });
+
+  MonitorUntilTheFormatIsKnown();
+  CaptureForAWhile();
+  StopTheStream();
+
+  ASSERT_EQ(WrittenFiles().size(), 1U);
+  const std::filesystem::path expected = capture::AudioFilePath(
+      WrittenFiles().front(), capture::AudioConverter::kExternal);
+  EXPECT_NE(expected.filename().string().find("Casper_00H00M"),
+            std::string::npos);
+  EXPECT_EQ(AudioFilesIn(directory_),
+            (std::vector<std::filesystem::path>{expected}));
+
+  const std::string document = ReadWholeFile(MetadataFiles().front());
+  EXPECT_NE(document.find(expected.filename().string()), std::string::npos)
+      << document;
+}
+
+TEST_F(AudioCaptureTest, ADroppedSampleStopsAFramedCaptureByDefault) {
+  UseFramedGateware(SyntheticSource::Fault::kSequenceBreak);
+  QSignalSpy failed(controller_.get(), &CaptureController::Failed);
+
+  controller_->StartCapture();
+  ASSERT_TRUE(PumpUntil([&] { return !controller_->monitoring(); }));
+
+  ASSERT_EQ(failed.count(), 1);
+  EXPECT_TRUE(
+      failed.front().at(1).toString().contains(QStringLiteral("Framed stream")))
+      << failed.front().at(1).toString().toStdString();
+}
+
+TEST_F(AudioCaptureTest, ContinuingAfterDroppedSamplesIsCountedInTheFile) {
+  UseFramedGateware(SyntheticSource::Fault::kSequenceBreak);
+  Settings([](CaptureSettings& settings) {
+    settings.continue_after_dropped_samples = true;
+    settings.audio_source = capture::AudioSource::kIntegrated;
+  });
+  QSignalSpy failed(controller_.get(), &CaptureController::Failed);
+
+  uint64_t losses = 0;
+  QObject::connect(controller_.get(), &CaptureController::StatsUpdated,
+                   [&losses](const capture::CaptureStats& stats) {
+                     losses = stats.sync_losses;
+                   });
+
+  // Kept open until the loss has gone past, so that it is inside the file.
+  controller_->StartCapture();
+  ASSERT_TRUE(controller_->capturing());
+  ASSERT_TRUE(PumpUntil([&] { return losses > 0; }));
+  controller_->StopCapture();
+  ASSERT_TRUE(PumpUntil([&] { return !controller_->capturing(); }));
+  ASSERT_TRUE(PumpUntil([&] { return MetadataFiles().size() == 1U; }));
+  StopTheStream();
+
+  EXPECT_EQ(failed.count(), 0);
+  const std::string document = ReadWholeFile(MetadataFiles().front());
+  EXPECT_NE(document.find("\"sync_losses\": 1"), std::string::npos) << document;
+  EXPECT_NE(document.find("\"sequence_check\": \"resynchronised\""),
+            std::string::npos);
+  EXPECT_EQ(AudioFilesIn(directory_).size(), 1U);
+}
+
+TEST_F(AudioCaptureTest, ALossBeforeTheFileOpenedIsNotAHoleInIt) {
+  // The validator's "resynchronised" is sticky for the session, but a loss the
+  // stream carried on past before this file existed is not in this file.
+  UseFramedGateware(SyntheticSource::Fault::kSequenceBreak);
+  Settings([](CaptureSettings& settings) {
+    settings.continue_after_dropped_samples = true;
+  });
+
+  uint64_t losses = 0;
+  QObject::connect(controller_.get(), &CaptureController::StatsUpdated,
+                   [&losses](const capture::CaptureStats& stats) {
+                     losses = stats.sync_losses;
+                   });
+
+  controller_->StartMonitoring();
+  ASSERT_TRUE(PumpUntil([&] { return losses > 0; }));
+
+  CaptureForAWhile();
+  StopTheStream();
+
+  const std::string document = ReadWholeFile(MetadataFiles().front());
+  EXPECT_NE(document.find("\"sync_losses\": 0"), std::string::npos) << document;
+  EXPECT_NE(document.find("\"sequence_check\": \"running\""),
+            std::string::npos);
 }
 
 }  // namespace

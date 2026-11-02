@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "analysis_worker.h"
+#include "audio_sink.h"
 #include "capture_metadata.h"
 #include "capture_metatypes.h"
 #include "capture_pipeline.h"
@@ -220,6 +221,12 @@ class CaptureController : public QObject {
   // box, which would send somebody looking for a fault in the wrong place.
   void MetadataWriteFailed(const QString& detail);
 
+  // Audio was asked for and this gateware does not send any. Not a failure
+  // either: the RF capture goes ahead exactly as it would have, with no audio
+  // files beside it, and this is the sentence that says why. Raised once per
+  // capture.
+  void AudioUnavailable(const QString& message);
+
   // The destination volume has less space left than the warning threshold.
   // Raised once per capture: a warning that repeated every two seconds for the
   // rest of a disc side would be ignored, which is worse than not warning.
@@ -274,13 +281,39 @@ class CaptureController : public QObject {
   // orphaned by it, and a signal carrying the old path would name a file that
   // is no longer there.
   void FinishCaptureFile(const capture::CaptureStats& stats, uint64_t bytes,
-                         uint64_t samples);
+                         uint64_t samples,
+                         const capture::AudioWriteSummary& audio);
 
   // Write the sidecar beside `capture_file`, and report a failure without
   // treating it as one.
   void WriteMetadataSidecar(const std::filesystem::path& capture_file,
                             const capture::CaptureStats& stats, uint64_t bytes,
                             uint64_t samples, double duration_seconds);
+
+  // Wrap the RF sink with audio writers where the settings ask for audio and
+  // the stream may carry it. Returns the sink to attach — the one it was given
+  // when no audio is to be written — or null with the failure already
+  // reported, in which case the RF file has been closed and removed.
+  std::unique_ptr<capture::ISampleSink> AddAudioFiles(
+      std::unique_ptr<capture::ISampleSink> rf_sink,
+      const std::filesystem::path& capture_file,
+      const capture::CaptureStats& opening);
+
+  // Say, once per capture, that audio was asked for and the gateware has none
+  // to give.
+  void ReportAudioUnavailable();
+
+  // Watch the running capture's stream for the moment it turns out to have no
+  // audio in it, when audio was asked for and the capture was opened before
+  // the stream had been looked at.
+  void CheckAudioAvailability(const capture::CaptureStats& stats);
+
+  // The audio files' half of finishing a capture: removed again if the stream
+  // never carried audio, renamed beside the capture if it was renamed, and
+  // described for the sidecar.
+  void FinishAudioFiles(const capture::CaptureStats& stats,
+                        const capture::AudioWriteSummary& audio,
+                        const std::filesystem::path& capture_file);
 
   // Stop the capture because the duration limit has been reached.
   void CheckDurationLimit(const capture::CaptureStats& stats);
@@ -360,6 +393,17 @@ class CaptureController : public QObject {
   // see SampleMetrics::BeginCaptureSpan.
   uint64_t device_overflows_at_start_ = 0;
   uint64_t device_drops_at_start_ = 0;
+
+  // The same, for a framed stream's losses, so that the sidecar counts the
+  // ones inside this file.
+  uint64_t sync_losses_at_start_ = 0;
+
+  // The running capture's audio: which converters it asked for, where their
+  // files are, and whether the gateware has been found to send none.
+  capture::AudioSource capture_audio_source_ = capture::AudioSource::kNone;
+  std::filesystem::path integrated_audio_path_;
+  std::filesystem::path external_audio_path_;
+  bool audio_unavailable_reported_ = false;
 };
 
 }  // namespace ddd::gui

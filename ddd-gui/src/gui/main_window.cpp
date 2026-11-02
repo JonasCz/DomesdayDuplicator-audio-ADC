@@ -258,6 +258,13 @@ MainWindow::MainWindow(ThemeController* theme_controller,
                   tr("The capture is written. Its metadata file is not: %1")
                       .arg(detail));
             });
+    // The status bar, and the log the controller has already written to. The
+    // capture is running and is everything it would have been; only the audio
+    // somebody asked for is not there to be had, and a box in front of a
+    // capture that has just started would be in the way of watching it.
+    connect(
+        capture_controller_, &CaptureController::AudioUnavailable, this,
+        [this](const QString& message) { statusBar()->showMessage(message); });
     connect(capture_controller_, &CaptureController::LowSpaceWarning, this,
             [this](const QString& message) {
               QMessageBox::warning(this, tr("Running out of space"), message);

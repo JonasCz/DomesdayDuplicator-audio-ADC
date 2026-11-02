@@ -13,7 +13,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
+
+#include "audio_metrics.h"
+#include "framed_format.h"
 
 namespace ddd::capture {
 
@@ -83,6 +87,22 @@ class ISampleSink {
   // keep up" from "the encoder cannot keep up" — two problems with different
   // remedies that look the same from the ring's point of view.
   virtual uint64_t SamplesPending() const { return 0; }
+
+  // The audio a framed stream carried in the buffer just written, one stereo
+  // sample per frame. Called after Write(), with the buffer's frames, and only
+  // for a stream that has any.
+  //
+  // Discarded unless the sink keeps it, which is why this has a default: the
+  // RF sinks know nothing about audio, and the one that writes it wraps them
+  // (audio_sink.h). Returns false on failure, as Write() does.
+  virtual bool WriteAudio(std::span<const AudioFrame> frames) {
+    static_cast<void>(frames);
+    return true;
+  }
+
+  // What has reached each audio file so far. Nothing open, for a sink that
+  // keeps no audio.
+  virtual AudioWriteSummary AudioWritten() const { return {}; }
 
   virtual const std::string& LastError() const = 0;
 };

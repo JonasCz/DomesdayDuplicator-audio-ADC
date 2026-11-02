@@ -64,6 +64,14 @@ class StatisticsPanel : public QWidget {
   static constexpr const char* kSpaceLabelName = "statistics_space_remaining";
   static constexpr const char* kLinkSpeedLabelName = "statistics_link_speed";
   static constexpr const char* kGainLabelName = "statistics_front_end_gain";
+  static constexpr const char* kStreamFormatLabelName =
+      "statistics_stream_format";
+  static constexpr const char* kSyncLossesLabelName = "statistics_sync_losses";
+  static constexpr const char* kIntegratedAudioLabelName =
+      "statistics_integrated_audio";
+  static constexpr const char* kExternalAudioLabelName =
+      "statistics_external_audio";
+  static constexpr const char* kAudioFilesLabelName = "statistics_audio_files";
 
   // See CapturePanel::kFreeSpaceIntervalMilliseconds — the same reasoning, and
   // deliberately the same figure, so the two panels never disagree about how
@@ -90,6 +98,9 @@ class StatisticsPanel : public QWidget {
   // the converter's own rate when there is no controller to ask.
   uint32_t SampleRateHz() const;
 
+  // Which converters a capture records, or none without a controller.
+  capture::AudioSource AudioSource() const;
+
   QLabel* throughput_ = nullptr;
   QLabel* sequence_ = nullptr;
   QProgressBar* buffer_fill_ = nullptr;
@@ -106,6 +117,11 @@ class StatisticsPanel : public QWidget {
   QLabel* space_ = nullptr;
   QLabel* link_speed_ = nullptr;
   QLabel* gain_ = nullptr;
+  QLabel* stream_format_ = nullptr;
+  QLabel* sync_losses_ = nullptr;
+  QLabel* integrated_audio_ = nullptr;
+  QLabel* external_audio_ = nullptr;
+  QLabel* audio_files_ = nullptr;
 
   CaptureController* controller_ = nullptr;
 

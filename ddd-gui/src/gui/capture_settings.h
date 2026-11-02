@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "audio_sink.h"
 #include "capture_format.h"
 #include "capture_naming.h"
 #include "disk_buffer_ring.h"
@@ -139,6 +140,34 @@ struct CaptureSettings {
   // wrong in the direction that costs a session.
   int low_space_warning_minutes = kDefaultLowSpaceWarningMinutes;
 
+  // --- Audio, and what a framed stream does when it loses samples ---------
+
+  // Which of the board's audio converters a capture writes files for. None by
+  // default: the original gateware sends no audio at all, and a capture that
+  // created audio files nobody asked for would be clutter beside every
+  // recording.
+  //
+  // Only a framed stream carries audio (framed_format.h). Asked of a stream in
+  // the sequence-counter format, the capture goes ahead exactly as it would
+  // have, with no audio files, and says that the gateware does not provide
+  // any — this is a request about what to keep, not a precondition.
+  //
+  // Persisted: whether the converters are fitted and wired is a fact about a
+  // bench, and it does not change between captures.
+  capture::AudioSource audio_source = capture::AudioSource::kNone;
+
+  // Keep capturing when a framed stream loses samples, rather than stopping
+  // with the failure every lost sample is by default. The loss is counted,
+  // the validator picks the framing up again at the next sync pattern, and the
+  // count is shown, logged and written into the sidecar. It does nothing for a
+  // stream in the sequence-counter format, which fails on its first lost
+  // sample as it always has.
+  //
+  // Off by default, because the default has to be a capture that is what it
+  // says it is. Persisted, because somebody who has decided a capture with a
+  // hole in it is better than no capture has decided it for their setup.
+  bool continue_after_dropped_samples = false;
+
   static constexpr int kDefaultLowSpaceWarningMinutes = 10;
   static constexpr int kMaximumDurationLimitMinutes = 24 * 60;
   static constexpr int kMaximumDurationLimitSeconds =
@@ -158,7 +187,10 @@ struct CaptureSettings {
            decimation_factor == other.decimation_factor &&
            compression_level == other.compression_level &&
            duration_limit_seconds == other.duration_limit_seconds &&
-           low_space_warning_minutes == other.low_space_warning_minutes;
+           low_space_warning_minutes == other.low_space_warning_minutes &&
+           audio_source == other.audio_source &&
+           continue_after_dropped_samples ==
+               other.continue_after_dropped_samples;
   }
   bool operator!=(const CaptureSettings& other) const {
     return !(*this == other);
@@ -173,7 +205,9 @@ struct CaptureSettings {
   // uncompressed is twice what FLAC costs and decimating halves it, and a
   // figure that assumed a compressed 40 Msps capture would be out by a factor
   // of four at the extremes — in the direction that lets a volume fill up
-  // before the warning ever fires.
+  // before the warning ever fires. Audio files, where they are asked for, are
+  // added on: under a megabyte a second for both, which is small against the
+  // RF and is still disk the estimate has no reason to leave out.
   double EstimatedBytesPerSecond() const;
 
   // The rate the samples actually arrive at.

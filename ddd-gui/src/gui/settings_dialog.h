@@ -70,6 +70,9 @@ class SettingsDialog : public QDialog {
   static constexpr const char* kBrowseButtonName = "settings_browse";
   static constexpr const char* kFrontEndGainComboName =
       "settings_front_end_gain";
+  static constexpr const char* kAudioSourceComboName = "settings_audio_source";
+  static constexpr const char* kContinueAfterDroppedCheckName =
+      "settings_continue_after_dropped_samples";
 
   static constexpr const char* kPlayerEnabledCheckName =
       "settings_player_enabled";
@@ -96,6 +99,8 @@ class SettingsDialog : public QDialog {
   QComboBox* device_ = nullptr;
   QLineEdit* directory_ = nullptr;
   QComboBox* front_end_gain_ = nullptr;
+  QComboBox* audio_source_ = nullptr;
+  QCheckBox* continue_after_dropped_ = nullptr;
 
   QCheckBox* player_enabled_ = nullptr;
   QComboBox* player_model_ = nullptr;

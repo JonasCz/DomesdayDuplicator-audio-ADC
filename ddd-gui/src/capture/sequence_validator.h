@@ -35,6 +35,13 @@ enum class SequenceState {
   // A counter did not follow its predecessor. Samples have been lost, and there
   // is no recovering them.
   kFailed,
+
+  // Samples were lost and the capture was allowed to carry on regardless: the
+  // validator found the next sync pattern and picked the check up again from
+  // there. Only a framed stream can reach this (framed_stream_validator.h),
+  // and only when continuing after a loss was asked for. Sticky — a capture
+  // with a hole in it does not become intact again by being in step now.
+  kResynchronised,
 };
 
 const char* SequenceStateName(SequenceState state);

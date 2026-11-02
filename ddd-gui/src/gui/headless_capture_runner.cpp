@@ -121,6 +121,11 @@ void HeadlessCaptureRunner::Begin() {
   connect(controller_, &CaptureController::LowSpaceWarning, this,
           [this](const QString& message) { Say(message); });
 
+  // Said and not acted on, like a rename: the capture is the one asked for in
+  // every respect but the audio, which the gateware does not send.
+  connect(controller_, &CaptureController::AudioUnavailable, this,
+          [this](const QString& message) { Say(message); });
+
   if (options_.device_wait_milliseconds > 0) {
     device_timer_.start(options_.device_wait_milliseconds);
   }

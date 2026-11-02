@@ -21,6 +21,7 @@
 #include <QTabWidget>
 #include <vector>
 
+#include "audio_sink.h"
 #include "player_settings.h"
 #include "serial_port_scanner.h"
 #include "settings_dialog.h"
@@ -103,6 +104,49 @@ TEST(SettingsDialogTest, EachHalfComesBackAsItWentIn) {
   EXPECT_EQ(dialog.Player().model_id_code, QStringLiteral("15"));
   EXPECT_EQ(dialog.Player().port_path, QStringLiteral("/dev/ttyUSB1"));
   EXPECT_EQ(dialog.Player().baud_rate, 4800U);
+}
+
+TEST(SettingsDialogTest, TheAudioSettingsComeBackAsTheyWentIn) {
+  for (const ddd::capture::AudioSource source :
+       {ddd::capture::AudioSource::kNone,
+        ddd::capture::AudioSource::kIntegrated,
+        ddd::capture::AudioSource::kExternal,
+        ddd::capture::AudioSource::kBoth}) {
+    CaptureSettings capture;
+    capture.audio_source = source;
+    capture.continue_after_dropped_samples =
+        source == ddd::capture::AudioSource::kBoth;
+
+    const SettingsDialog dialog(capture, {}, PlayerSettings{}, TwoPorts());
+    EXPECT_EQ(dialog.Settings().audio_source, source);
+    EXPECT_EQ(dialog.Settings().continue_after_dropped_samples,
+              capture.continue_after_dropped_samples);
+  }
+}
+
+TEST(SettingsDialogTest, EveryAudioSourceCanBeChosenAndContinuingTurnedOn) {
+  const SettingsDialog dialog(CaptureSettings{}, {}, PlayerSettings{},
+                              TwoPorts());
+
+  auto* source = Find<QComboBox>(dialog, SettingsDialog::kAudioSourceComboName);
+  auto* carry_on =
+      Find<QCheckBox>(dialog, SettingsDialog::kContinueAfterDroppedCheckName);
+  ASSERT_NE(source, nullptr);
+  ASSERT_NE(carry_on, nullptr);
+
+  // None first, and chosen: a capture that grew audio files nobody asked for
+  // would be clutter beside every recording.
+  ASSERT_EQ(source->count(), 4);
+  EXPECT_EQ(source->currentIndex(), 0);
+  EXPECT_FALSE(carry_on->isChecked());
+
+  source->setCurrentIndex(3);
+  carry_on->setChecked(true);
+  EXPECT_EQ(dialog.Settings().audio_source, ddd::capture::AudioSource::kBoth);
+  EXPECT_TRUE(dialog.Settings().continue_after_dropped_samples);
+
+  // The tooltip names the files, because nothing else on screen does.
+  EXPECT_TRUE(source->toolTip().contains(QStringLiteral(".s24")));
 }
 
 // Both moved off the Capture panel: neither is changed once it is set, and a

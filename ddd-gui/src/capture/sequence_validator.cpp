@@ -27,6 +27,8 @@ const char* SequenceStateName(SequenceState state) {
       return "disabled";
     case SequenceState::kFailed:
       return "failed";
+    case SequenceState::kResynchronised:
+      return "resynchronised";
   }
   return "unknown";
 }

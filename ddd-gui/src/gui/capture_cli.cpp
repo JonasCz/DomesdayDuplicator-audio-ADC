@@ -29,6 +29,23 @@ constexpr const char* kCaptureNameName = "capture-name";
 constexpr const char* kSampleRateName = "sample-rate";
 constexpr const char* kDurationLimitName = "duration-limit";
 constexpr const char* kOutputFormatName = "output-format";
+constexpr const char* kAudioSourceName = "audio-source";
+constexpr const char* kOnDroppedSamplesName = "on-dropped-samples";
+
+// What a framed stream does when it loses samples: stop, as every stream does
+// by default, or carry on past the hole.
+constexpr const char* kStopWord = "stop";
+constexpr const char* kContinueWord = "continue";
+
+QString AudioSourceWords() {
+  QStringList words;
+  for (const capture::AudioSource source :
+       {capture::AudioSource::kNone, capture::AudioSource::kIntegrated,
+        capture::AudioSource::kExternal, capture::AudioSource::kBoth}) {
+    words.append(QLatin1String(capture::AudioSourceName(source)));
+  }
+  return words.join(QStringLiteral(", "));
+}
 
 // The format words, spelled as the settings file spells them, so that a script
 // and a settings file name the same format the same way. The reading of them
@@ -82,7 +99,8 @@ bool IsOptionToken(const QString& token, const char* name) {
 bool CaptureCliOptions::HasAttributeOverrides() const {
   return capture_directory.has_value() || capture_name.has_value() ||
          decimation_factor.has_value() || duration_limit_seconds.has_value() ||
-         output_format.has_value();
+         output_format.has_value() || audio_source.has_value() ||
+         continue_after_dropped_samples.has_value();
 }
 
 CaptureCliOptionSet AddCaptureCliOptions(QCommandLineParser& parser) {
@@ -126,6 +144,20 @@ CaptureCliOptionSet AddCaptureCliOptions(QCommandLineParser& parser) {
                              .arg(QLatin1String(kFlacFormatWord),
                                   QLatin1String(kSigned16BitFormatWord)),
                          QStringLiteral("format")),
+      QCommandLineOption(
+          QLatin1String(kAudioSourceName),
+          QStringLiteral("Record the audio gateware's converters beside the "
+                         "capture: %1. Gateware without audio support "
+                         "captures without it.")
+              .arg(AudioSourceWords()),
+          QStringLiteral("source")),
+      QCommandLineOption(
+          QLatin1String(kOnDroppedSamplesName),
+          QStringLiteral("What a capture from audio gateware does when it "
+                         "loses samples: %1 (the default) or %2 past the "
+                         "hole, counting it.")
+              .arg(QLatin1String(kStopWord), QLatin1String(kContinueWord)),
+          QStringLiteral("action")),
   };
 
   parser.addOption(set.start_capture);
@@ -136,6 +168,8 @@ CaptureCliOptionSet AddCaptureCliOptions(QCommandLineParser& parser) {
   parser.addOption(set.sample_rate);
   parser.addOption(set.duration_limit);
   parser.addOption(set.output_format);
+  parser.addOption(set.audio_source);
+  parser.addOption(set.on_dropped_samples);
 
   return set;
 }
@@ -246,6 +280,35 @@ CaptureCliParseResult ParseCaptureCliOptions(const QCommandLineParser& parser,
     }
   }
 
+  if (parser.isSet(set.audio_source)) {
+    const QString word = parser.value(set.audio_source).trimmed().toLower();
+    const std::optional<capture::AudioSource> source =
+        capture::AudioSourceFromName(word.toStdString());
+    if (!source.has_value()) {
+      result.error =
+          QStringLiteral("Unknown --audio-source '%1'. Use %2.")
+              .arg(parser.value(set.audio_source), AudioSourceWords());
+      return result;
+    }
+    options.audio_source = source;
+  }
+
+  if (parser.isSet(set.on_dropped_samples)) {
+    const QString word =
+        parser.value(set.on_dropped_samples).trimmed().toLower();
+    if (word == QLatin1String(kStopWord)) {
+      options.continue_after_dropped_samples = false;
+    } else if (word == QLatin1String(kContinueWord)) {
+      options.continue_after_dropped_samples = true;
+    } else {
+      result.error =
+          QStringLiteral("Unknown --on-dropped-samples '%1'. Use %2 or %3.")
+              .arg(parser.value(set.on_dropped_samples),
+                   QLatin1String(kStopWord), QLatin1String(kContinueWord));
+      return result;
+    }
+  }
+
   // --stop-capture is a message to a process that is already running and has
   // already been told what to capture. Anything else on the line is an
   // instruction with nowhere to go, so it is refused rather than dropped.
@@ -283,6 +346,13 @@ void ApplyCliOverrides(CaptureSettings& settings,
   }
   if (options.output_format.has_value()) {
     settings.output_format = *options.output_format;
+  }
+  if (options.audio_source.has_value()) {
+    settings.audio_source = *options.audio_source;
+  }
+  if (options.continue_after_dropped_samples.has_value()) {
+    settings.continue_after_dropped_samples =
+        *options.continue_after_dropped_samples;
   }
 }
 

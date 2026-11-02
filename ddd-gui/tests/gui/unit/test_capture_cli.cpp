@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "audio_sink.h"
 #include "capture_cli.h"
 #include "capture_format.h"
 #include "capture_settings.h"
@@ -248,6 +249,60 @@ TEST(CaptureCliTest, AFormatThisBuildDoesNotWriteIsRefusedRatherThanIgnored) {
       << parsed.error.toStdString();
 }
 
+TEST(CaptureCliTest, EveryAudioSourceIsAccepted) {
+  for (const capture::AudioSource source :
+       {capture::AudioSource::kNone, capture::AudioSource::kIntegrated,
+        capture::AudioSource::kExternal, capture::AudioSource::kBoth}) {
+    const Parsed parsed =
+        Parse({QStringLiteral("--audio-source"),
+               QLatin1String(capture::AudioSourceName(source))});
+    ASSERT_TRUE(parsed.ok()) << parsed.error.toStdString();
+    EXPECT_EQ(parsed.options.audio_source,
+              std::optional<capture::AudioSource>(source));
+    EXPECT_TRUE(parsed.options.HasAttributeOverrides());
+  }
+}
+
+TEST(CaptureCliTest, AnAudioSourceThisBuildDoesNotKnowIsRefused) {
+  const Parsed parsed =
+      Parse({QStringLiteral("--audio-source"), QStringLiteral("pcm1802")});
+
+  EXPECT_TRUE(parsed.accepted);
+  EXPECT_TRUE(parsed.error.contains(QStringLiteral("pcm1802")))
+      << parsed.error.toStdString();
+  EXPECT_TRUE(parsed.error.contains(QStringLiteral("integrated")));
+}
+
+TEST(CaptureCliTest, WhatADroppedSampleDoesCanBeNamedEitherWay) {
+  // Both spellings, so a script can turn it off for one run as well as on —
+  // a flag that could only be given would leave a saved "continue" with no
+  // way to be overridden from a command line.
+  const Parsed carry_on = Parse(
+      {QStringLiteral("--on-dropped-samples"), QStringLiteral("continue")});
+  ASSERT_TRUE(carry_on.ok()) << carry_on.error.toStdString();
+  EXPECT_EQ(carry_on.options.continue_after_dropped_samples,
+            std::optional<bool>(true));
+
+  const Parsed stop =
+      Parse({QStringLiteral("--on-dropped-samples"), QStringLiteral("stop")});
+  ASSERT_TRUE(stop.ok()) << stop.error.toStdString();
+  EXPECT_EQ(stop.options.continue_after_dropped_samples,
+            std::optional<bool>(false));
+
+  const Parsed neither =
+      Parse({QStringLiteral("--on-dropped-samples"), QStringLiteral("ignore")});
+  EXPECT_TRUE(neither.accepted);
+  EXPECT_FALSE(neither.error.isEmpty());
+}
+
+TEST(CaptureCliTest, TheAudioOptionsAreNotForStopCapture) {
+  const Parsed parsed =
+      Parse({QStringLiteral("--stop-capture"), QStringLiteral("--audio-source"),
+             QStringLiteral("both")});
+  EXPECT_TRUE(parsed.accepted);
+  EXPECT_FALSE(parsed.error.isEmpty());
+}
+
 TEST(CaptureCliTest, AnEmptyCaptureNameIsRefused) {
   const Parsed parsed = Parse({QStringLiteral("--capture-name"), QString()});
 
@@ -350,6 +405,20 @@ TEST(CaptureCliTest, OnlyWhatWasNamedChanges) {
   EXPECT_EQ(settings.decimation_factor, capture::kUndecimatedFactor);
   EXPECT_EQ(settings.output_format, capture::CaptureOutputFormat::kFlac);
   EXPECT_EQ(settings.compression_level, 3);
+}
+
+TEST(CaptureCliTest, TheAudioOptionsReachTheSettingsForThisRunOnly) {
+  CaptureSettings settings;
+  settings.audio_source = capture::AudioSource::kNone;
+  settings.continue_after_dropped_samples = true;
+
+  CaptureCliOptions options;
+  options.audio_source = capture::AudioSource::kExternal;
+  options.continue_after_dropped_samples = false;
+  ApplyCliOverrides(settings, options);
+
+  EXPECT_EQ(settings.audio_source, capture::AudioSource::kExternal);
+  EXPECT_FALSE(settings.continue_after_dropped_samples);
 }
 
 TEST(CaptureCliTest, ACommandLineThatNamedNothingChangesNothing) {

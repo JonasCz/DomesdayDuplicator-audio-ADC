@@ -252,18 +252,28 @@ struct CaptureOutcome {
   // How the sequence-marker check ended, in the engine's own vocabulary:
   // "running" for a check that was locked on and found nothing wrong, "failed"
   // for one that found a break, "disabled" for gateware that emits no markers,
-  // "synchronising" for a capture too short to have locked on.
+  // "synchronising" for a capture too short to have locked on, and
+  // "resynchronised" for a framed stream that lost samples and was allowed to
+  // carry on — see sync_losses, which says how often.
   //
   // The state rather than a boolean, and that is the point. This is the
   // integrity claim the whole instrument exists to be able to make, and
   // "disabled" is not "intact" — it is "nothing checked" — so a field that
-  // could only say yes or no would have to lie about one of the four.
+  // could only say yes or no would have to lie about one of the five.
   //
   // It is about this file although the validator runs for the whole session,
   // and that is not an oversight: a mismatch ends the run where it is found, so
   // a break cannot have happened earlier in the session and be inherited by a
   // capture that started afterwards. There would have been no afterwards.
   std::string sequence_check;
+
+  // A framed stream only: the losses it carried on past while this file was
+  // open, each of them a place where samples are missing from it. Counted is
+  // false for a stream in the sequence-counter format, which cannot carry on
+  // past any, so the field is left out rather than written as a zero that
+  // would read as a check that found nothing.
+  bool sync_losses_counted = false;
+  uint64_t sync_losses = 0;
 
   // Test mode only. `checked` is false for an ordinary capture, and for a test
   // capture that was stopped before a full ramp had gone past.
@@ -296,6 +306,51 @@ struct SignalSummary {
   uint64_t clipped_high_samples = 0;
 };
 
+// One audio file written beside a capture.
+//
+// The files are headerless, so this record is the only place their rate and
+// layout are written down — which is why it says both in full rather than
+// leaving a reader to know the convention.
+struct AudioFileRecord {
+  // The file's name alone, as capture_file_name is. Empty for no file.
+  std::string file_name;
+
+  // The part, and what the bytes are.
+  std::string converter;
+  std::string encoding;
+
+  uint32_t channels = 2;
+  uint32_t bits_per_sample = 0;
+
+  // Exact, and not always whole: 39,062.5 Hz for a decimated stream.
+  double sample_rate_hz = 0.0;
+
+  // Per channel: one stereo sample per frame of the stream.
+  uint64_t samples = 0;
+  uint64_t bytes = 0;
+
+  // Samples at either rail, and the largest magnitude, over this file alone.
+  uint64_t clipped_samples = 0;
+  int32_t peak = 0;
+  int32_t full_scale = 0;
+
+  bool present() const { return !file_name.empty(); }
+};
+
+// What audio a capture asked for, and what it got.
+struct AudioRecording {
+  // "integrated", "external" or "both". Empty when none was asked for, which
+  // leaves the whole section out.
+  std::string requested;
+
+  // Why there is no audio beside the capture, when some was asked for and
+  // none was kept: the gateware not sending any is the ordinary reason.
+  std::string not_recorded;
+
+  AudioFileRecord integrated;
+  AudioFileRecord external;
+};
+
 // The whole document.
 struct CaptureMetadata {
   // The capture file this sits beside, as its name alone — not its path. A
@@ -313,6 +368,11 @@ struct CaptureMetadata {
   int decimation_factor = 1;
   uint32_t sample_rate_hz = 0;
 
+  // What the top bits of the samples carried: "sequence counter" or "framed",
+  // in StreamFormatName's words. Empty for a capture too short to have been
+  // looked at.
+  std::string stream_format;
+
   // The declared front-end gain, as a sentence, or empty for a gain that was
   // never declared. Empty is the important case: a figure nobody checked would
   // read as calibration data.
@@ -324,6 +384,7 @@ struct CaptureMetadata {
   CaptureNamingFields naming;
   CaptureOutcome outcome;
   SignalSummary signal;
+  AudioRecording audio;
   DeviceBuild device;
   PlayerIdentity player;
   DiscScan disc;

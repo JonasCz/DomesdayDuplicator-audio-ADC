@@ -21,6 +21,7 @@
 #include <string>
 #include <thread>
 
+#include "audio_metrics.h"
 #include "disk_buffer_ring.h"
 #include "fill_history.h"
 #include "monitor_tap.h"
@@ -28,7 +29,7 @@
 #include "sample_metrics.h"
 #include "sample_sink.h"
 #include "sample_source.h"
-#include "sequence_validator.h"
+#include "stream_validator.h"
 #include "test_pattern_verifier.h"
 #include "transfer_result.h"
 
@@ -65,6 +66,14 @@ class CapturePipeline {
     // Check the device's test-pattern ramp as well as the sequence markers.
     // Only meaningful when the device has been put into test mode.
     bool test_mode = false;
+
+    // What to do when a framed stream loses samples. Off — the default, and
+    // the only behaviour a sequence-counter stream has — fails the capture
+    // with kSequenceMismatch, as any other lost sample does. On counts the
+    // loss, finds the next sync pattern and carries on, so the capture keeps
+    // going with a hole in it; the count is in the statistics, the log and the
+    // sidecar. See FramedStreamValidator.
+    bool continue_after_dropped_samples = false;
 
     // Pin the ring into physical memory. Off only for tests that would
     // otherwise need a raised locked-memory limit to run.
@@ -218,6 +227,15 @@ class CapturePipeline {
   void LogProgress();
   void LogStopDetail();
 
+  // What the stream turned out to be, and any losses a framed stream carried
+  // on past, said from the control thread as the published statistics show
+  // them. The processing thread finds both and logs neither (logger.h).
+  //
+  // `flush` says whatever is outstanding regardless of when losses were last
+  // mentioned, for the end of a run: one that ends inside the interval would
+  // otherwise take its last losses with it.
+  void LogStreamEvents(bool flush);
+
   // The wire rate the configured sample rate implies, in bytes per second.
   // What a measured throughput is worth comparing against.
   double ExpectedBytesPerSecond() const;
@@ -271,8 +289,14 @@ class CapturePipeline {
   std::atomic<uint64_t> buffers_processed_{0};
 
   // Processing-thread state. Touched by that thread alone.
-  SequenceValidator validator_;
+  StreamValidator validator_;
   SampleMetrics metrics_;
+  AudioMetrics audio_metrics_;
+
+  // The most recent loss a framed stream carried on past, and the buffer it
+  // was in, for the statistics block to carry to the control thread.
+  FramedStreamValidator::Fault last_sync_loss_;
+  uint64_t last_sync_loss_buffer_ = 0;
   TestPatternVerifier test_pattern_verifier_;
   TestPatternVerifier::Result test_pattern_result_;
   bool test_pattern_checked_ = false;
@@ -335,6 +359,14 @@ class CapturePipeline {
   std::unique_ptr<SnapshotPublisher> snapshots_;
 
   std::chrono::steady_clock::time_point start_time_;
+
+  // Control-thread state for LogStreamEvents: what has been said already, and
+  // when the losses were last mentioned. Losses are summarised rather than
+  // logged one by one, because a link that has gone bad can lose sync many
+  // times a second and a log of every one would bury everything else in it.
+  bool stream_format_logged_ = false;
+  uint64_t sync_losses_logged_ = 0;
+  std::chrono::steady_clock::time_point sync_losses_logged_at_;
 };
 
 }  // namespace ddd::capture

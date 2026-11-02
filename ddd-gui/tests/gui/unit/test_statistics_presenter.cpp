@@ -17,6 +17,7 @@
 #include <memory>
 #include <thread>
 
+#include "audio_sink.h"
 #include "capture_format.h"
 #include "capture_pipeline.h"
 #include "front_end_gain.h"
@@ -551,6 +552,144 @@ TEST(StatisticsPresenterTest, TheSampleAndTransferRowsAreScaled) {
 // The acceptance criterion for this panel: every figure comes from the stats
 // block, and the stats block is the one a real pipeline published. Anything
 // that reads pipeline state directly, or invents a figure, disagrees here.
+// --- The stream format and its audio -----------------------------------------
+
+capture::CaptureStats FramedStats() {
+  capture::CaptureStats stats = RunningStats();
+  stats.stream_format = capture::StreamFormat::kFramed;
+
+  stats.audio.integrated.measured = true;
+  stats.audio.integrated.frames = 4096;
+  stats.audio.integrated.minimum = -1830;
+  stats.audio.integrated.maximum = 1795;
+  stats.audio.integrated.clipped = 3;
+  stats.audio.integrated.recent_peak_left = 1024;   // -6.0 dBFS
+  stats.audio.integrated.recent_peak_right = 2048;  // 0.0 dBFS
+
+  stats.audio.external.measured = true;
+  stats.audio.external.recent_peak_left = 838'861;  // -20.0 dBFS
+  stats.audio.external.recent_peak_right = 0;
+  return stats;
+}
+
+TEST(StatisticsPresenterTest, AFramedStreamSaysSoWithItsAudioRate) {
+  const StatisticsView view = PresentStatistics(FramedStats(), Undeclared(),
+                                                capture::DeviceSpeed::kSuper);
+  EXPECT_EQ(view.stream_format, QStringLiteral("Framed — audio at 78125 Hz"));
+  EXPECT_EQ(view.sync_losses, QStringLiteral("None"));
+
+  // At 20 Msps the rate is not a whole number, and it is shown as it is.
+  const StatisticsView decimated = PresentStatistics(
+      FramedStats(), Undeclared(), capture::DeviceSpeed::kSuper, {},
+      capture::kEstimatedCaptureBytesPerSecond, 20'000'000);
+  EXPECT_EQ(decimated.stream_format,
+            QStringLiteral("Framed — audio at 39062.5 Hz"));
+}
+
+TEST(StatisticsPresenterTest, TheAudioLevelsAreInDecibelsBelowFullScale) {
+  const StatisticsView view = PresentStatistics(FramedStats(), Undeclared(),
+                                                capture::DeviceSpeed::kSuper);
+
+  EXPECT_EQ(
+      view.integrated_audio,
+      QStringLiteral("L -6.0 dBFS, R 0.0 dBFS  (-1830 to 1795, 3 clipped)"));
+  EXPECT_TRUE(
+      view.external_audio.startsWith(QStringLiteral("L -20.0 dBFS, R silent")))
+      << view.external_audio.toStdString();
+}
+
+TEST(StatisticsPresenterTest, ASequenceCounterStreamHasNoAudioToShow) {
+  capture::CaptureStats stats = RunningStats();
+  stats.stream_format = capture::StreamFormat::kSequenceCounter;
+
+  const StatisticsView view =
+      PresentStatistics(stats, Undeclared(), capture::DeviceSpeed::kSuper, {},
+                        capture::kEstimatedCaptureBytesPerSecond,
+                        capture::kSampleRateHz, capture::AudioSource::kBoth);
+
+  EXPECT_EQ(view.stream_format, QStringLiteral("Sequence counter — no audio"));
+  EXPECT_EQ(view.sync_losses, None());
+  EXPECT_EQ(view.integrated_audio, None());
+  EXPECT_EQ(view.external_audio, None());
+
+  // Asked for, and the gateware has none: said, rather than left looking like
+  // a capture that is quietly recording.
+  EXPECT_EQ(view.audio_files,
+            QStringLiteral("Asked for, but this gateware sends no audio"));
+}
+
+TEST(StatisticsPresenterTest,
+     GatewareWithNoMarkersIsNotCalledASequenceCounter) {
+  capture::CaptureStats stats = RunningStats();
+  stats.stream_format = capture::StreamFormat::kSequenceCounter;
+  stats.sequence_state = capture::SequenceState::kDisabled;
+
+  const StatisticsView view =
+      PresentStatistics(stats, Undeclared(), capture::DeviceSpeed::kSuper);
+  EXPECT_EQ(view.stream_format,
+            QStringLiteral("No sequence markers — no audio"));
+}
+
+TEST(StatisticsPresenterTest, AResynchronisedStreamIsNotCalledIntact) {
+  capture::CaptureStats stats = FramedStats();
+  stats.sequence_state = capture::SequenceState::kResynchronised;
+  stats.sync_losses = 3;
+
+  const StatisticsView view =
+      PresentStatistics(stats, Undeclared(), capture::DeviceSpeed::kSuper);
+  EXPECT_FALSE(view.integrity.contains(QStringLiteral("no samples lost")));
+  EXPECT_TRUE(view.integrity.contains(QStringLiteral("lost")))
+      << view.integrity.toStdString();
+  EXPECT_EQ(view.sync_losses,
+            QStringLiteral("3 — samples are missing at each"));
+}
+
+TEST(StatisticsPresenterTest, TheAudioFilesRowSaysWhatIsBeingDoneWithIt) {
+  // Nothing asked for.
+  EXPECT_EQ(PresentStatistics(FramedStats(), Undeclared(),
+                              capture::DeviceSpeed::kSuper)
+                .audio_files,
+            QStringLiteral("Not recorded"));
+
+  // Asked for, while monitoring.
+  const StatisticsView monitoring = PresentStatistics(
+      FramedStats(), Undeclared(), capture::DeviceSpeed::kSuper, {},
+      capture::kEstimatedCaptureBytesPerSecond, capture::kSampleRateHz,
+      capture::AudioSource::kIntegrated);
+  EXPECT_EQ(
+      monitoring.audio_files,
+      QStringLiteral("Recording the integrated converter when capturing"));
+
+  // And while a capture is writing them.
+  capture::CaptureStats writing = FramedStats();
+  writing.writing = true;
+  writing.audio_written.integrated.open = true;
+  writing.audio_written.integrated.bytes = 3'000'000;
+  writing.audio_written.external.open = true;
+  writing.audio_written.external.bytes = 4'400'000;
+  const StatisticsView capturing =
+      PresentStatistics(writing, Undeclared(), capture::DeviceSpeed::kSuper, {},
+                        capture::kEstimatedCaptureBytesPerSecond,
+                        capture::kSampleRateHz, capture::AudioSource::kBoth);
+  EXPECT_EQ(capturing.audio_files,
+            QStringLiteral("Writing integrated 3 MB, external 4 MB"));
+
+  // Before anything has run, the setting is all there is to go on.
+  EXPECT_EQ(PresentIdleStatistics(Undeclared(), capture::DeviceSpeed::kSuper,
+                                  {}, capture::kEstimatedCaptureBytesPerSecond,
+                                  capture::AudioSource::kBoth)
+                .audio_files,
+            QStringLiteral("Recording both converters when capturing"));
+}
+
+TEST(StatisticsPresenterTest, NothingAboutTheStreamIsShownBeforeItIsKnown) {
+  const StatisticsView view = PresentStatistics(RunningStats(), Undeclared(),
+                                                capture::DeviceSpeed::kSuper);
+  EXPECT_EQ(view.stream_format, None());
+  EXPECT_EQ(view.sync_losses, None());
+  EXPECT_EQ(view.integrated_audio, None());
+}
+
 TEST(StatisticsPresenterTest, TheFiguresAreTheOnesASyntheticRunProduced) {
   capture::CallbackLogger logger([](capture::LogLevel, const std::string&) {},
                                  capture::LogLevel::kError);

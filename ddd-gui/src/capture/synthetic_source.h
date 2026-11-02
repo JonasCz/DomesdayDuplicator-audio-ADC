@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "framed_format.h"
 #include "sample_source.h"
 
 namespace ddd::capture {
@@ -63,6 +64,10 @@ class SyntheticSource : public ISampleSource {
 
     // Skip a sequence counter value. The validator must notice on the very next
     // sample and stop the capture with kSequenceMismatch.
+    //
+    // In a framed stream, drop kFramedBreakSamples samples instead, as a lost
+    // stretch of a transfer would: the framing slips, and the next frame's sync
+    // pattern is not where the validator expects it.
     kSequenceBreak,
 
     // Skip a step in the test-pattern ramp, leaving the sequence counters
@@ -110,6 +115,15 @@ class SyntheticSource : public ISampleSource {
 
     Fault fault = Fault::kNone;
 
+    // Generate the audio gateware's framed layout rather than the sequence
+    // counter. The RF in the bottom ten bits is the same either way; the audio
+    // is AudioFor() of each frame's index, so a test can predict every sample.
+    bool framed = false;
+
+    // Where a framed stream's 48-bit counter starts, so a test can put its
+    // wrap inside a run.
+    uint64_t framed_counter_start = 0;
+
     // Which slot the fault appears in, counted from the first one handed over.
     uint64_t fault_at_slot = 4;
 
@@ -128,6 +142,15 @@ class SyntheticSource : public ISampleSource {
   // The ramp length the current gateware produces. 1021, not 1024: the test
   // pattern is not a full 10-bit counter.
   static constexpr uint16_t kRampLength = 1021;
+
+  // What Fault::kSequenceBreak drops from a framed stream. Not a multiple of a
+  // frame, so the framing slips rather than only the counter jumping.
+  static constexpr size_t kFramedBreakSamples = 300;
+
+  // The audio a framed stream carries in its frame_index-th frame, counted from
+  // the first frame generated. The external converter's left channel is the
+  // index itself, so a file of it says which frame each sample came from.
+  static AudioFrame AudioFor(uint64_t frame_index);
 
   explicit SyntheticSource(Options options);
   ~SyntheticSource() override = default;
@@ -176,11 +199,24 @@ class SyntheticSource : public ISampleSource {
 
   Options options_;
 
+  // The next sample's RF value, advancing the ramp or the sine.
+  uint16_t NextSampleValue();
+
+  // The top six bits of the next sample of a framed stream, advancing its
+  // framing.
+  uint8_t NextFramedTopBits();
+
   // Generator state, carried across slots so the stream is continuous
   uint16_t ramp_value_ = 0;
   uint8_t sequence_counter_ = 0;
   uint32_t samples_until_counter_increment_ = 0;
   uint64_t sine_phase_samples_ = 0;
+
+  // Framed generator state.
+  size_t frame_position_ = 0;
+  uint64_t frame_index_ = 0;
+  uint64_t framed_counter_ = 0;
+  AudioFrame frame_audio_;
 
   uint64_t slots_generated_ = 0;
   std::atomic<uint64_t> slots_delivered_{0};

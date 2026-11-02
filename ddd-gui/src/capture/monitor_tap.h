@@ -16,9 +16,12 @@
 #include <cstdint>
 #include <vector>
 
+#include "audio_metrics.h"
 #include "fpga_telemetry.h"
+#include "framed_stream_validator.h"
 #include "sample_metrics.h"
 #include "sequence_validator.h"
+#include "stream_validator.h"
 #include "transfer_result.h"
 
 namespace ddd::capture {
@@ -69,6 +72,27 @@ struct CaptureStats {
   size_t slot_count = 0;
 
   SequenceState sequence_state = SequenceState::kSynchronising;
+
+  // What the top bits of the samples turned out to carry, decided on the first
+  // buffer — see StreamValidator.
+  StreamFormat stream_format = StreamFormat::kUndetermined;
+
+  // A framed stream only: the losses it was allowed to carry on past, and the
+  // most recent of them, so that the control thread can say where it was
+  // without the processing thread logging anything (logger.h).
+  // last_sync_loss_buffer is the buffer it was found in, counted from the
+  // start of the run.
+  uint64_t sync_losses = 0;
+  FramedStreamValidator::Fault last_sync_loss;
+  uint64_t last_sync_loss_buffer = 0;
+
+  // A framed stream's audio levels, both converters, whether or not anything
+  // is recording them — so the levels can be set before a capture starts.
+  AudioMetricsSnapshot audio;
+
+  // What has reached the audio files of the capture being written, if it is
+  // writing any.
+  AudioWriteSummary audio_written;
 
   // Test mode only, and nothing until a capture has run in it
   bool test_pattern_checked = false;

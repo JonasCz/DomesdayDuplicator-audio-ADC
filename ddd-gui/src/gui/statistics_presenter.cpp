@@ -12,10 +12,15 @@
 #include "statistics_presenter.h"
 
 #include <QCoreApplication>
+#include <QStringList>
 #include <algorithm>
+#include <cmath>
 
+#include "audio_metrics.h"
+#include "framed_format.h"
 #include "gain_choices.h"
 #include "sample_format.h"
+#include "stream_validator.h"
 
 namespace ddd::gui {
 namespace {
@@ -39,6 +44,9 @@ QString DescribeSequenceState(capture::SequenceState state) {
           "Not available — this gateware does not send sequence markers");
     case capture::SequenceState::kFailed:
       return Translate("Broken — samples have been lost");
+    case capture::SequenceState::kResynchronised:
+      return Translate(
+          "Resynchronised — samples have been lost and the capture carried on");
   }
   return Translate("Unknown");
 }
@@ -135,7 +143,108 @@ QString DetailBackPressure(const capture::CaptureStats& stats) {
       .arg(stats.device_dropped_words);
 }
 
+// The stream's format, in the panel's words. A stream with no markers at all
+// is the sequence-counter path's disabled case, and says so, because "sequence
+// counter" for a stream that carries none would be wrong.
+QString DescribeStreamFormat(const capture::CaptureStats& stats,
+                             uint32_t sample_rate_hz) {
+  switch (stats.stream_format) {
+    case capture::StreamFormat::kUndetermined:
+      return None();
+    case capture::StreamFormat::kSequenceCounter:
+      return stats.sequence_state == capture::SequenceState::kDisabled
+                 ? Translate("No sequence markers — no audio")
+                 : Translate("Sequence counter — no audio");
+    case capture::StreamFormat::kFramed: {
+      // Without a group separator, so the figure reads the same whatever the
+      // locale, and with its half where it has one.
+      const double rate = capture::FramedAudioSampleRateHz(sample_rate_hz);
+      return Translate("Framed — audio at %1 Hz")
+          .arg(rate, 0, 'f', std::fmod(rate, 1.0) == 0.0 ? 0 : 1);
+    }
+  }
+  return None();
+}
+
+QString DescribeSyncLosses(const capture::CaptureStats& stats) {
+  if (stats.stream_format != capture::StreamFormat::kFramed) {
+    return None();
+  }
+  if (stats.sync_losses == 0) {
+    return Translate("None");
+  }
+  return Translate("%1 — samples are missing at each").arg(stats.sync_losses);
+}
+
+QString DescribeConverters(capture::AudioSource source) {
+  switch (source) {
+    case capture::AudioSource::kNone:
+      break;
+    case capture::AudioSource::kIntegrated:
+      return Translate("the integrated converter");
+    case capture::AudioSource::kExternal:
+      return Translate("the external converter");
+    case capture::AudioSource::kBoth:
+      return Translate("both converters");
+  }
+  return QString();
+}
+
+// What is happening to the audio, which is a question about the setting as
+// much as about the stream.
+QString DescribeAudioFiles(const capture::CaptureStats* stats,
+                           capture::AudioSource source) {
+  if (source == capture::AudioSource::kNone) {
+    return Translate("Not recorded");
+  }
+
+  if (stats != nullptr &&
+      stats->stream_format == capture::StreamFormat::kSequenceCounter) {
+    return Translate("Asked for, but this gateware sends no audio");
+  }
+
+  if (stats != nullptr && stats->writing &&
+      (stats->audio_written.integrated.open ||
+       stats->audio_written.external.open)) {
+    QStringList parts;
+    if (stats->audio_written.integrated.open) {
+      parts.append(
+          Translate("integrated %1")
+              .arg(FormatByteSize(stats->audio_written.integrated.bytes)));
+    }
+    if (stats->audio_written.external.open) {
+      parts.append(
+          Translate("external %1")
+              .arg(FormatByteSize(stats->audio_written.external.bytes)));
+    }
+    return Translate("Writing %1").arg(parts.join(QStringLiteral(", ")));
+  }
+
+  return Translate("Recording %1 when capturing")
+      .arg(DescribeConverters(source));
+}
+
 }  // namespace
+
+QString FormatAudioLevel(const capture::AudioLevel& level, int32_t full_scale) {
+  if (!level.measured) {
+    return None();
+  }
+
+  const auto decibels = [full_scale](int32_t magnitude) {
+    if (magnitude <= 0) {
+      return Translate("silent");
+    }
+    return Translate("%1 dBFS").arg(
+        capture::DecibelsFullScale(magnitude, full_scale), 0, 'f', 1);
+  };
+
+  return Translate("L %1, R %2  (%3 to %4, %5 clipped)")
+      .arg(decibels(level.recent_peak_left), decibels(level.recent_peak_right))
+      .arg(level.minimum)
+      .arg(level.maximum)
+      .arg(level.clipped);
+}
 
 QString FormatThroughput(double bytes_per_second) {
   if (bytes_per_second <= 0.0) {
@@ -272,7 +381,8 @@ QString FormatSpaceRemaining(const capture::FreeSpace& space,
 StatisticsView PresentIdleStatistics(const analysis::FrontEndGain& gain,
                                      capture::DeviceSpeed speed,
                                      const capture::FreeSpace& space,
-                                     double bytes_per_second) {
+                                     double bytes_per_second,
+                                     capture::AudioSource audio_source) {
   StatisticsView view;
   view.throughput = None();
   view.integrity = None();
@@ -289,6 +399,11 @@ StatisticsView PresentIdleStatistics(const analysis::FrontEndGain& gain,
   view.space_remaining = FormatSpaceRemaining(space, bytes_per_second);
   view.link_speed = DescribeLinkSpeed(speed);
   view.front_end_gain = DescribeFrontEndGain(gain.switch_pattern());
+  view.stream_format = None();
+  view.sync_losses = None();
+  view.integrated_audio = None();
+  view.external_audio = None();
+  view.audio_files = DescribeAudioFiles(nullptr, audio_source);
   return view;
 }
 
@@ -297,12 +412,21 @@ StatisticsView PresentStatistics(const capture::CaptureStats& stats,
                                  capture::DeviceSpeed speed,
                                  const capture::FreeSpace& space,
                                  double bytes_per_second,
-                                 uint32_t sample_rate_hz) {
+                                 uint32_t sample_rate_hz,
+                                 capture::AudioSource audio_source) {
   StatisticsView view =
-      PresentIdleStatistics(gain, speed, space, bytes_per_second);
+      PresentIdleStatistics(gain, speed, space, bytes_per_second, audio_source);
 
   view.throughput = FormatThroughput(stats.throughput_bytes_per_second);
   view.integrity = DescribeSequenceState(stats.sequence_state);
+
+  view.stream_format = DescribeStreamFormat(stats, sample_rate_hz);
+  view.sync_losses = DescribeSyncLosses(stats);
+  view.integrated_audio = FormatAudioLevel(stats.audio.integrated,
+                                           capture::kIntegratedAudioFullScale);
+  view.external_audio =
+      FormatAudioLevel(stats.audio.external, capture::kExternalAudioFullScale);
+  view.audio_files = DescribeAudioFiles(&stats, audio_source);
 
   if (stats.slot_count > 0) {
     view.buffer_percent =

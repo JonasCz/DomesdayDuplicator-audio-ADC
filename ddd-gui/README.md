@@ -111,6 +111,23 @@ cable, the kernel's usbfs limit and a machine that cannot keep up are four diffe
 answers, not one. Whatever the failure, the FLAC stream is closed properly on the way out,
 so what was written is readable and reports its own length.
 
+**Audio, from gateware that sends it**. Gateware with audio support cuts the stream into
+512-sample frames whose top six bits carry a sync pattern, a stereo sample from each of
+the board's two audio converters — the on-board ADC128S022 and an external PCM1802 — and a
+48-bit counter, in place of the original gateware's sequence counter. The application
+tells the two apart from the stream itself, on its first buffer, and validates a framed
+stream as strictly as the other: a missing sync pattern or a counter that skips stops the
+capture, unless *Continue after dropped samples* is on in *File → Settings…*, in which
+case the loss is counted, the framing is picked up again at the next frame and the capture
+carries on. *Audio* in the same dialog chooses which converters a capture records, as
+headerless stereo files beside it — `_audio_integrated_adc.s16` and
+`_audio_external_adc.s24` — at the stream's rate over 512 (78,125 Hz, or 39,062.5 Hz at
+20 Msps), which the sidecar records along with their layout. The Statistics panel shows the
+stream's format, its sync losses and both converters' levels whether or not they are being
+recorded. With the original gateware none of this changes anything: the capture runs as it
+always has, and audio that was asked for is reported as not available rather than failing
+anything. `--audio-source` and `--on-dropped-samples` do the same from a command line.
+
 **Test-mode integrity checking**. With the gateware's test pattern running, every sample is
 the previous one plus one, and any break is a sample the capture path lost. Test captures
 are always named `TestData_` — forced, not defaulted, because a file called "Blade Runner

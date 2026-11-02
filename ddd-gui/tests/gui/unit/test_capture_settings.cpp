@@ -15,6 +15,7 @@
 #include <QSettings>
 #include <QString>
 
+#include "audio_sink.h"
 #include "capture_format.h"
 #include "capture_settings.h"
 #include "disk_buffer_ring.h"
@@ -320,6 +321,68 @@ TEST_F(CaptureSettingsTest, TheSampleRateFollowsTheDecimation) {
   // whole display by it.
   settings.decimation_factor = 7;
   EXPECT_EQ(settings.SampleRateHz(), capture::kSampleRateHz);
+}
+
+// --- Audio, and continuing after a loss --------------------------------------
+
+TEST_F(CaptureSettingsTest,
+       NoAudioIsRecordedAndNoLossIsCarriedOnPastByDefault) {
+  // The original gateware sends no audio, and the default has to be a capture
+  // that is what it says it is.
+  const CaptureSettings settings = LoadCaptureSettings();
+  EXPECT_EQ(settings.audio_source, capture::AudioSource::kNone);
+  EXPECT_FALSE(settings.continue_after_dropped_samples);
+}
+
+TEST_F(CaptureSettingsTest, TheAudioSettingsSurviveARestart) {
+  for (const capture::AudioSource source :
+       {capture::AudioSource::kIntegrated, capture::AudioSource::kExternal,
+        capture::AudioSource::kBoth, capture::AudioSource::kNone}) {
+    CaptureSettings saved;
+    saved.audio_source = source;
+    saved.continue_after_dropped_samples =
+        source != capture::AudioSource::kNone;
+    SaveCaptureSettings(saved);
+
+    const CaptureSettings loaded = LoadCaptureSettings();
+    EXPECT_EQ(loaded.audio_source, source);
+    EXPECT_EQ(loaded.continue_after_dropped_samples,
+              saved.continue_after_dropped_samples);
+    EXPECT_EQ(loaded, saved);
+  }
+}
+
+TEST_F(CaptureSettingsTest, TheAudioSourceIsStoredAsAWord) {
+  CaptureSettings saved;
+  saved.audio_source = capture::AudioSource::kBoth;
+  SaveCaptureSettings(saved);
+  EXPECT_EQ(
+      QSettings().value(QStringLiteral("capture/audio_source")).toString(),
+      QStringLiteral("both"));
+}
+
+TEST_F(CaptureSettingsTest, AnUnknownAudioSourceReadsAsNone) {
+  QSettings().setValue(QStringLiteral("capture/audio_source"),
+                       QStringLiteral("pcm1802"));
+  EXPECT_EQ(LoadCaptureSettings().audio_source, capture::AudioSource::kNone);
+}
+
+TEST_F(CaptureSettingsTest, AudioFilesAreCountedInTheDiskRate) {
+  // A stereo pair a frame, 512 RF samples to a frame: 312,500 bytes a second
+  // for the integrated converter and 468,750 for the external one at 40 Msps,
+  // and half of each when decimating.
+  CaptureSettings settings;
+  settings.output_format = capture::CaptureOutputFormat::kSigned16Bit;
+  const double rf = settings.EstimatedBytesPerSecond();
+
+  settings.audio_source = capture::AudioSource::kIntegrated;
+  EXPECT_DOUBLE_EQ(settings.EstimatedBytesPerSecond(), rf + 312'500.0);
+
+  settings.audio_source = capture::AudioSource::kBoth;
+  EXPECT_DOUBLE_EQ(settings.EstimatedBytesPerSecond(), rf + 781'250.0);
+
+  settings.decimation_factor = capture::kTapeDecimationFactor;
+  EXPECT_DOUBLE_EQ(settings.EstimatedBytesPerSecond(), (rf + 781'250.0) / 2.0);
 }
 
 TEST_F(CaptureSettingsTest, TheGainIsNotPassedToTheEngine) {

@@ -125,6 +125,35 @@ StatisticsPanel::StatisticsPanel(CaptureController* controller, QWidget* parent)
   link_speed_ = add_row(tr("Link speed"), kLinkSpeedLabelName);
   gain_ = add_row(tr("Front-end gain"), kGainLabelName, true);
 
+  // The stream itself, and the audio a framed one carries. Last, because on
+  // gateware without audio support every one of these is a dash, and the rows
+  // that answer "is this working?" for every board belong above them.
+  stream_format_ = add_row(tr("Stream format"), kStreamFormatLabelName);
+  stream_format_->setToolTip(
+      tr("What the top six bits of every sample carry. The original gateware "
+         "sends a sequence counter; gateware with audio support cuts the "
+         "stream into 512-sample frames carrying a sync pattern, one stereo "
+         "sample from each audio converter and a counter. The application "
+         "decides which from the stream itself."));
+  sync_losses_ = add_row(tr("Sync losses"), kSyncLossesLabelName, true);
+  sync_losses_->setToolTip(
+      tr("How often a framed stream lost samples and was picked up again at "
+         "its next frame. Only possible with Continue after dropped samples "
+         "turned on; otherwise the first loss stops the capture."));
+  integrated_audio_ =
+      add_row(tr("Integrated audio"), kIntegratedAudioLabelName, true);
+  integrated_audio_->setToolTip(
+      tr("The on-board ADC128S022: each channel's peak over the most recent "
+         "buffer, relative to the converter's full scale, then the range and "
+         "the clipped samples since the run started, in its 12-bit units."));
+  external_audio_ =
+      add_row(tr("External audio"), kExternalAudioLabelName, true);
+  external_audio_->setToolTip(
+      tr("The PCM1802: each channel's peak over the most recent buffer, "
+         "relative to the converter's full scale, then the range and the "
+         "clipped samples since the run started, in its 24-bit units."));
+  audio_files_ = add_row(tr("Audio files"), kAudioFilesLabelName, true);
+
   layout->addLayout(form);
   layout->addStretch();
 
@@ -167,9 +196,15 @@ uint32_t StatisticsPanel::SampleRateHz() const {
                                 : capture::kSampleRateHz;
 }
 
+capture::AudioSource StatisticsPanel::AudioSource() const {
+  return controller_ != nullptr ? controller_->settings().audio_source
+                                : capture::AudioSource::kNone;
+}
+
 void StatisticsPanel::OnStatsUpdated(const ddd::capture::CaptureStats& stats) {
   Apply(PresentStatistics(stats, declared_gain_, link_, destination_space_,
-                          EstimatedBytesPerSecond(), SampleRateHz()));
+                          EstimatedBytesPerSecond(), SampleRateHz(),
+                          AudioSource()));
 }
 
 void StatisticsPanel::OnMonitoringChanged(bool monitoring) {
@@ -201,7 +236,7 @@ void StatisticsPanel::ShowIdle() {
   // the last run's worst moment would linger over the next one.
   back_pressure_hold_.Reset();
   Apply(PresentIdleStatistics(declared_gain_, link_, destination_space_,
-                              EstimatedBytesPerSecond()));
+                              EstimatedBytesPerSecond(), AudioSource()));
 }
 
 void StatisticsPanel::RefreshFreeSpace() {
@@ -233,6 +268,11 @@ void StatisticsPanel::Apply(const StatisticsView& view) {
   space_->setText(view.space_remaining);
   link_speed_->setText(view.link_speed);
   gain_->setText(view.front_end_gain);
+  stream_format_->setText(view.stream_format);
+  sync_losses_->setText(view.sync_losses);
+  integrated_audio_->setText(view.integrated_audio);
+  external_audio_->setText(view.external_audio);
+  audio_files_->setText(view.audio_files);
 
   buffer_fill_->setValue(view.buffer_percent);
   buffer_fill_->setFormat(view.buffer);
