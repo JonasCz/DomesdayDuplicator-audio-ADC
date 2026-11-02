@@ -29,6 +29,7 @@
 #include "sample_metrics.h"
 #include "sample_sink.h"
 #include "sample_source.h"
+#include "sdram_status.h"
 #include "stream_validator.h"
 #include "test_pattern_verifier.h"
 #include "transfer_result.h"
@@ -206,6 +207,11 @@ class CapturePipeline {
     return device_back_pressure_;
   }
 
+  // How full the gateware's SDRAM buffer got, one reading a buffer, as its
+  // in-band status reported it. Empty for a stream that carries no status. The
+  // same rules as the two above: valid once Wait() has returned.
+  const FillHistory& sdram_fill() const { return sdram_fill_; }
+
  private:
   class Control;
 
@@ -292,6 +298,7 @@ class CapturePipeline {
   StreamValidator validator_;
   SampleMetrics metrics_;
   AudioMetrics audio_metrics_;
+  SdramMonitor sdram_monitor_;
 
   // The most recent loss a framed stream carried on past, and the buffer it
   // was in, for the statistics block to carry to the control thread.
@@ -344,6 +351,7 @@ class CapturePipeline {
   // everything above it, published by being read after the join.
   FillHistory ring_fill_;
   FillHistory device_back_pressure_;
+  FillHistory sdram_fill_;
 
   // The span the current file covers, for the line logged when it closes.
   // Written by the processing thread inside PerformPendingSinkChange and
@@ -365,6 +373,8 @@ class CapturePipeline {
   // logged one by one, because a link that has gone bad can lose sync many
   // times a second and a log of every one would bury everything else in it.
   bool stream_format_logged_ = false;
+  bool sdram_logged_ = false;
+  bool sdram_overflow_logged_ = false;
   uint64_t sync_losses_logged_ = 0;
   std::chrono::steady_clock::time_point sync_losses_logged_at_;
 };

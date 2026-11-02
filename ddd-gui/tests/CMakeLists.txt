@@ -57,6 +57,7 @@ ddd_add_test(ddd_capture_tests "unit"
     unit/test_sequence_validator.cpp
     unit/test_framed_stream_validator.cpp
     unit/test_audio_sink.cpp
+    unit/test_sdram_status.cpp
     unit/test_sample_metrics.cpp
     unit/test_disk_buffer_ring.cpp
     unit/test_monitor_tap.cpp

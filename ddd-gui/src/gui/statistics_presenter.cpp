@@ -19,7 +19,9 @@
 #include "audio_metrics.h"
 #include "framed_format.h"
 #include "gain_choices.h"
+#include "log_format.h"
 #include "sample_format.h"
+#include "sdram_status.h"
 #include "stream_validator.h"
 
 namespace ddd::gui {
@@ -224,7 +226,72 @@ QString DescribeAudioFiles(const capture::CaptureStats* stats,
       .arg(DescribeConverters(source));
 }
 
+QString DescribeSdram(const capture::CaptureStats& stats,
+                      uint32_t sample_rate_hz) {
+  if (stats.stream_format == capture::StreamFormat::kUndetermined) {
+    return None();
+  }
+  if (!stats.sdram.present) {
+    return Translate("Not reported by this gateware");
+  }
+
+  QString caption =
+      Translate("now %1, peak %2")
+          .arg(FormatSdramFill(stats.sdram.current.fill_rows, sample_rate_hz),
+               FormatSdramFill(stats.sdram.peak_rows, sample_rate_hz));
+
+  // The two states worth words. An overflow is the damage, and once it has
+  // happened it is the first thing to say; a buffer the stream is not going
+  // through is a buffer whose fill means nothing about this capture.
+  if (stats.sdram.overflow_seen) {
+    caption = Translate("Overflowed, samples dropped — %1").arg(caption);
+  } else if (!stats.sdram.current.active) {
+    caption = Translate("Bypassed — %1").arg(caption);
+  }
+  return caption;
+}
+
+QString DetailSdram(const capture::CaptureStats& stats,
+                    uint32_t sample_rate_hz) {
+  if (!stats.sdram.present) {
+    return QString();
+  }
+
+  const auto yes_no = [](bool value) {
+    return value ? Translate("yes") : Translate("no");
+  };
+
+  return Translate(
+             "The device's %1 SDRAM buffer, which holds %2 ms of stream at "
+             "this rate. A working capture keeps it near empty; it fills "
+             "while the host is not taking data, and drains once it is "
+             "again.\n"
+             "Now %3 of %4 rows; peak %5 since the run started.\n"
+             "Stream passing through it: %6. Initialised: %7. Overflowed "
+             "since collection started: %8.")
+      .arg(QString::fromStdString(
+          capture::FormatBytes(capture::kSdramCapacityBytes)))
+      .arg(capture::SdramFillMilliseconds(capture::kSdramCapacityRows,
+                                          sample_rate_hz),
+           0, 'f', 0)
+      .arg(stats.sdram.current.fill_rows)
+      .arg(capture::kSdramCapacityRows)
+      .arg(stats.sdram.peak_rows)
+      .arg(yes_no(stats.sdram.current.active),
+           yes_no(stats.sdram.current.initialised),
+           yes_no(stats.sdram.current.overflowed));
+}
+
 }  // namespace
+
+QString FormatSdramFill(uint32_t rows, uint32_t sample_rate_hz) {
+  return Translate("%1% (%2 MiB, %3 ms)")
+      .arg(capture::SdramFillPercent(rows), 0, 'f', 1)
+      .arg(static_cast<double>(capture::SdramFillBytes(rows)) /
+               (1024.0 * 1024.0),
+           0, 'f', 1)
+      .arg(capture::SdramFillMilliseconds(rows, sample_rate_hz), 0, 'f', 0);
+}
 
 QString FormatAudioLevel(const capture::AudioLevel& level, int32_t full_scale) {
   if (!level.measured) {
@@ -401,6 +468,7 @@ StatisticsView PresentIdleStatistics(const analysis::FrontEndGain& gain,
   view.front_end_gain = DescribeFrontEndGain(gain.switch_pattern());
   view.stream_format = None();
   view.sync_losses = None();
+  view.sdram = None();
   view.integrated_audio = None();
   view.external_audio = None();
   view.audio_files = DescribeAudioFiles(nullptr, audio_source);
@@ -427,6 +495,13 @@ StatisticsView PresentStatistics(const capture::CaptureStats& stats,
   view.external_audio =
       FormatAudioLevel(stats.audio.external, capture::kExternalAudioFullScale);
   view.audio_files = DescribeAudioFiles(&stats, audio_source);
+
+  view.sdram = DescribeSdram(stats, sample_rate_hz);
+  view.sdram_detail = DetailSdram(stats, sample_rate_hz);
+  if (stats.sdram.present) {
+    view.sdram_percent = static_cast<int>(
+        std::lround(capture::SdramFillPercent(stats.sdram.current.fill_rows)));
+  }
 
   if (stats.slot_count > 0) {
     view.buffer_percent =

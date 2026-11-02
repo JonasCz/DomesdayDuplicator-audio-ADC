@@ -71,6 +71,7 @@ add_library(ddd_capture STATIC
     raw_sink.cpp
     sample_metrics.cpp
     sample_sink.cpp
+    sdram_status.cpp
     sequence_validator.cpp
     spdlog_logger.cpp
     stream_validator.cpp

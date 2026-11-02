@@ -151,6 +151,10 @@ bool CapturePipeline::Start(ISampleSource* source,
       .continue_after_sync_loss = options_.continue_after_dropped_samples});
   metrics_.Reset();
   audio_metrics_.Reset();
+  sdram_monitor_.Reset();
+  sdram_fill_.Reset();
+  sdram_logged_ = false;
+  sdram_overflow_logged_ = false;
   last_sync_loss_ = FramedStreamValidator::Fault{};
   last_sync_loss_buffer_ = 0;
   stream_format_logged_ = false;
@@ -477,6 +481,23 @@ void CapturePipeline::LogStopDetail() {
                    std::to_string(stats.peak_device_buffer_words) + " words");
   }
 
+  // The SDRAM is the second buffer a stall is paid out of, and the much larger
+  // one, so its peak is the figure that says how long the host was ever out to
+  // lunch — in rows, in bytes, and in the time it stands for at this rate.
+  if (stats.sdram.present) {
+    logger_->Debug(
+        "Device SDRAM: " + sdram_fill_.Describe() + "; peak " +
+        std::to_string(stats.sdram.peak_rows) + " of " +
+        std::to_string(kSdramCapacityRows) + " rows = " +
+        FormatBytes(SdramFillBytes(stats.sdram.peak_rows)) + " = " +
+        FormatDecimal(SdramFillMilliseconds(stats.sdram.peak_rows,
+                                            options_.sample_rate_hz),
+                      1) +
+        " ms of stream; " + (stats.sdram.active_seen ? "in" : "never in") +
+        " the path, " +
+        (stats.sdram.overflow_seen ? "overflowed" : "never overflowed"));
+  }
+
   // The signal itself, over everything the run saw. Not the file's own figures
   // — those are measured across the span the file covers and reported when it
   // closes — but the session's, which is what says whether the input was
@@ -554,6 +575,32 @@ void CapturePipeline::LogStreamEvents(bool flush) {
       logger_->Info(
           "The stream carries the sequence counter, so it has no audio in it");
     }
+  }
+
+  if (!sdram_logged_ && stats.sdram.present) {
+    sdram_logged_ = true;
+    logger_->Info(
+        "The gateware reports an SDRAM capture buffer of " +
+        FormatBytes(kSdramCapacityBytes) + ", " +
+        FormatDuration(
+            SdramFillMilliseconds(kSdramCapacityRows, options_.sample_rate_hz) /
+            1000.0) +
+        " of stream at this rate; the stream is " +
+        (stats.sdram.current.active ? "passing through it" : "bypassing it") +
+        (stats.sdram.current.initialised ? "" : ", and it is not initialised"));
+  }
+
+  // Once, and as a warning: the buffer filled and the gateware dropped
+  // samples, which the framing will also have caught. Said separately because
+  // it says *where* the samples went — the host fell behind for longer than
+  // the SDRAM holds.
+  if (!sdram_overflow_logged_ && stats.sdram.overflow_seen) {
+    sdram_overflow_logged_ = true;
+    logger_->Warning(
+        "The device's SDRAM buffer overflowed: the host stopped taking data "
+        "for longer than its " +
+        FormatBytes(kSdramCapacityBytes) +
+        " could hold, and samples were dropped");
   }
 
   if (stats.sync_losses == sync_losses_logged_) {
@@ -800,6 +847,7 @@ void CapturePipeline::PublishStats() {
   stats.last_sync_loss = last_sync_loss_;
   stats.last_sync_loss_buffer = last_sync_loss_buffer_;
   stats.audio = audio_metrics_.Snapshot();
+  stats.sdram = sdram_monitor_.Snapshot();
   stats.audio_written =
       (sink_ != nullptr) ? sink_->AudioWritten() : AudioWriteSummary{};
   stats.test_pattern_checked = test_pattern_checked_;
@@ -929,6 +977,17 @@ void CapturePipeline::ProcessingThread() {
         validator_.Process(data, slot_bytes);
     metrics_.Accumulate(outcome.tally);
     audio_metrics_.Accumulate(validator_.audio());
+
+    // The SDRAM's status rides in every frame. One reading of it a buffer goes
+    // into the fill history — the most recent, which is plenty: the peak is
+    // kept frame by frame in the monitor, and the history is for the shape of
+    // the run.
+    sdram_monitor_.Accumulate(validator_.audio());
+    if (!validator_.audio().empty() &&
+        DecodeSdramStatus(validator_.audio().back().reserved_word).present) {
+      sdram_fill_.Add(sdram_monitor_.Snapshot().current.fill_rows,
+                      kSdramCapacityRows);
+    }
 
     if (outcome.framed.sync_losses > 0) {
       last_sync_loss_ = outcome.framed.first_fault;
@@ -1172,6 +1231,21 @@ void CapturePipeline::ControlThread() {
           std::to_string(final_stats.device_overflow_events) + " overflows, " +
           std::to_string(final_stats.device_dropped_words) +
           " samples dropped");
+    }
+
+    // And the SDRAM's, on the same terms: the one line that says how close a
+    // capture that succeeded came to losing samples to a stall.
+    if (final_stats.sdram.present) {
+      logger_->Info(
+          "Device SDRAM: peak " +
+          FormatDecimal(SdramFillPercent(final_stats.sdram.peak_rows), 1) +
+          "% (" + FormatBytes(SdramFillBytes(final_stats.sdram.peak_rows)) +
+          ", " +
+          FormatDecimal(SdramFillMilliseconds(final_stats.sdram.peak_rows,
+                                              options_.sample_rate_hz),
+                        1) +
+          " ms of stream), " +
+          (final_stats.sdram.overflow_seen ? "overflowed" : "no overflow"));
     }
 
     // What the stream was, and for a framed one whether it lost anything it

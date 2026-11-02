@@ -123,11 +123,17 @@ inline constexpr int32_t kExternalAudioMaximum = 8'388'607;
 // it runs -2048..2047; the external one is sign-extended from 24 bits. Both are
 // what the converter said and nothing else — the scaling a file is written with
 // is the writer's business, not this struct's.
+//
+// The four reserved slots travel with it, put back together as one 24-bit
+// word: samples 36 and 37 are its top twelve bits and 46 and 47 its bottom
+// twelve. Zero from audio-only gateware; gateware with an SDRAM buffer reports
+// that buffer's status in it (sdram_status.h).
 struct AudioFrame {
   int32_t integrated_left = 0;
   int32_t integrated_right = 0;
   int32_t external_left = 0;
   int32_t external_right = 0;
+  uint32_t reserved_word = 0;
 };
 
 // A 12-bit unsigned reading from the integrated converter, centred on zero.
@@ -171,11 +177,16 @@ inline constexpr AudioFrame DecodeAudioFrame(
   constexpr size_t kExternal =
       kFrameExternalAudioOffset - kFrameIntegratedAudioOffset;
 
+  // Positions 36, 37, 46 and 47, most significant first.
+  constexpr size_t kReservedHigh = 36 - kFrameIntegratedAudioOffset;
+  constexpr size_t kReservedLow = 46 - kFrameIntegratedAudioOffset;
+
   AudioFrame frame;
   frame.integrated_left = CentreIntegratedAudio(pair(kIntegrated));
   frame.integrated_right = CentreIntegratedAudio(pair(kIntegrated + 2));
   frame.external_left = SignExtendExternalAudio(quad(kExternal));
   frame.external_right = SignExtendExternalAudio(quad(kExternal + 4));
+  frame.reserved_word = (pair(kReservedHigh) << 12) | pair(kReservedLow);
   return frame;
 }
 

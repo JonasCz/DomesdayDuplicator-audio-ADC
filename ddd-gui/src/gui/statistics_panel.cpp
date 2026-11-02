@@ -36,6 +36,15 @@ QString BackPressureTip() {
       "lost.");
 }
 
+// What the SDRAM bar means before there is a reading to describe.
+QString SdramTip() {
+  return StatisticsPanel::tr(
+      "How full the device's SDRAM capture buffer is, for gateware that has "
+      "one: it fills while this machine is not taking data and drains once "
+      "it is again. The caption gives the run's peak beside the current "
+      "fill — the peak is how close a stall came to losing samples.");
+}
+
 }  // namespace
 
 StatisticsPanel::StatisticsPanel(CaptureController* controller, QWidget* parent)
@@ -101,6 +110,17 @@ StatisticsPanel::StatisticsPanel(CaptureController* controller, QWidget* parent)
          "capture sits near zero; a figure that climbs and stays up means this "
          "machine is not keeping up."));
   form->addRow(tr("Buffer queue"), buffer_fill_);
+
+  // The gateware's SDRAM, where it has one: the larger buffer a stall is paid
+  // out of, reported in the stream itself rather than in a register. After
+  // the two buffers every board has rather than between them, because on most
+  // boards it reads "not reported".
+  sdram_ = new QProgressBar(contents);
+  sdram_->setObjectName(QLatin1String(kSdramBarName));
+  sdram_->setRange(0, 100);
+  sdram_->setValue(0);
+  sdram_->setToolTip(SdramTip());
+  form->addRow(tr("Device SDRAM"), sdram_);
 
   amplitude_ = add_row(tr("Signal level"), kAmplitudeLabelName);
   extremes_ = add_row(tr("Extremes"), kExtremesLabelName);
@@ -283,6 +303,11 @@ void StatisticsPanel::Apply(const StatisticsView& view) {
   back_pressure_->setValue(
       back_pressure_hold_.Apply(view.back_pressure_percent));
   back_pressure_->setFormat(view.back_pressure);
+
+  sdram_->setValue(view.sdram_percent);
+  sdram_->setFormat(view.sdram);
+  sdram_->setToolTip(view.sdram_detail.isEmpty() ? SdramTip()
+                                                 : view.sdram_detail);
 
   // The tooltip carries the figures the caption has no room for, and it changes
   // with them: a user who has just seen the bar move wants the detail of that

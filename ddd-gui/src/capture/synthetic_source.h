@@ -124,6 +124,11 @@ class SyntheticSource : public ISampleSource {
     // wrap inside a run.
     uint64_t framed_counter_start = 0;
 
+    // Report an SDRAM buffer in a framed stream's reserved slots, as gateware
+    // with one does: SdramStatusFor() of each frame. Off, the slots are zero,
+    // as audio-only gateware leaves them.
+    bool framed_sdram = false;
+
     // Which slot the fault appears in, counted from the first one handed over.
     uint64_t fault_at_slot = 4;
 
@@ -151,6 +156,12 @@ class SyntheticSource : public ISampleSource {
   // the first frame generated. The external converter's left channel is the
   // index itself, so a file of it says which frame each sample came from.
   static AudioFrame AudioFor(uint64_t frame_index);
+
+  // The SDRAM status word a framed stream with framed_sdram carries in its
+  // frame_index-th frame: layout 1, in the path, initialised, and filling by
+  // a row a frame until it is full — so the peak a run reports is the last
+  // frame it saw, and a long enough run reaches the top.
+  static uint32_t SdramStatusFor(uint64_t frame_index);
 
   explicit SyntheticSource(Options options);
   ~SyntheticSource() override = default;

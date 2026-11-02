@@ -19,6 +19,7 @@
 #include "front_end_gain.h"
 #include "monitor_tap.h"
 #include "sample_format.h"
+#include "sdram_status.h"
 #include "usb_device_info.h"
 
 namespace ddd::gui {
@@ -98,6 +99,16 @@ struct StatisticsView {
   // What is being done with the audio: which converters a capture records,
   // what has reached their files, or that the gateware sends none to record.
   QString audio_files;
+
+  // The gateware's SDRAM buffer, from the status every frame carries. The bar
+  // is how full it is now; the caption leads with that and gives the run's
+  // peak beside it, each as a share, a size and the time it stands for —
+  // the peak being the figure that says how close a stall came to costing
+  // samples. "Not reported" for gateware without one, which is every stream in
+  // the sequence-counter format.
+  QString sdram;
+  int sdram_percent = 0;
+  QString sdram_detail;
 };
 
 // The view for a set of statistics.
@@ -128,6 +139,10 @@ StatisticsView PresentIdleStatistics(
     const capture::FreeSpace& space = {},
     double bytes_per_second = capture::kEstimatedCaptureBytesPerSecond,
     capture::AudioSource audio_source = capture::AudioSource::kNone);
+
+// An SDRAM fill as a readout: its share of the buffer, its size and the length
+// of stream it holds at `sample_rate_hz`.
+QString FormatSdramFill(uint32_t rows, uint32_t sample_rate_hz);
 
 // One converter's level, as a readout: the most recent peak of each channel in
 // decibels below full scale, with the run's range and its clipping beside it.

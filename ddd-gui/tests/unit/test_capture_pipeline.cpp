@@ -535,6 +535,48 @@ TEST_F(CapturePipelineTest, ContinuingChangesNothingForASequenceCounterStream) {
             std::string::npos);
 }
 
+TEST_F(CapturePipelineTest, TheGatewaresSdramFillReachesTheStatistics) {
+  SyntheticSource::Options source_options = FramedSourceOptions();
+  source_options.framed_sdram = true;
+  source_options.slot_limit = 8;
+  SyntheticSource source(source_options);
+
+  CapturePipeline pipeline(&logger_);
+  ASSERT_TRUE(pipeline.Start(&source, std::make_unique<NullSink>(),
+                             BasePipelineOptions()));
+  const RunResult outcome = RunToCompletion(pipeline);
+  ASSERT_EQ(outcome.result, TransferResult::kSuccess);
+
+  // The synthetic gateware fills by a row a frame, so the peak is the last
+  // frame's index and so is the current reading.
+  const uint64_t frames = 8U * kTestSlotSamples / kFrameSamples;
+  EXPECT_TRUE(outcome.stats.sdram.present);
+  EXPECT_EQ(outcome.stats.sdram.peak_rows, frames - 1);
+  EXPECT_EQ(outcome.stats.sdram.current.fill_rows, frames - 1);
+  EXPECT_TRUE(outcome.stats.sdram.active_seen);
+  EXPECT_FALSE(outcome.stats.sdram.overflow_seen);
+  EXPECT_EQ(pipeline.sdram_fill().readings(), 8U);
+
+  EXPECT_TRUE(LogContains("reports an SDRAM capture buffer"));
+  EXPECT_TRUE(LogContains("Device SDRAM: peak"));
+}
+
+TEST_F(CapturePipelineTest, AudioOnlyGatewareReportsNoSdram) {
+  SyntheticSource::Options source_options = FramedSourceOptions();
+  source_options.slot_limit = 4;
+  SyntheticSource source(source_options);
+
+  CapturePipeline pipeline(&logger_);
+  ASSERT_TRUE(pipeline.Start(&source, std::make_unique<NullSink>(),
+                             BasePipelineOptions()));
+  const RunResult outcome = RunToCompletion(pipeline);
+  ASSERT_EQ(outcome.result, TransferResult::kSuccess);
+
+  EXPECT_FALSE(outcome.stats.sdram.present);
+  EXPECT_EQ(pipeline.sdram_fill().readings(), 0U);
+  EXPECT_FALSE(LogContains("SDRAM"));
+}
+
 TEST_F(CapturePipelineTest, AFramedTestCaptureStillChecksTheRamp) {
   SyntheticSource::Options source_options = FramedSourceOptions();
   source_options.slot_limit = 10;

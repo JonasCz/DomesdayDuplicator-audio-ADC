@@ -32,6 +32,7 @@
 #include "raw_sink.h"
 #include "sample_format.h"
 #include "sample_sink.h"
+#include "sdram_status.h"
 #include "statistics_presenter.h"
 #include "stream_validator.h"
 #include "version.h"
@@ -974,17 +975,24 @@ void CaptureController::FinishCaptureFile(
     // Differences rather than totals, for the reason the sidecar takes
     // differences: the pipeline's counters run for the whole session and what
     // matters here is what this file cost.
-    logger_->Debug("While this file was open: device lost " +
-                   std::to_string(Since(stats.device_dropped_words,
-                                        device_drops_at_start_)) +
-                   " samples in " +
-                   std::to_string(Since(stats.device_overflow_events,
-                                        device_overflows_at_start_)) +
-                   " overflows; session peak back pressure " +
-                   std::to_string(stats.peak_back_pressure_percent) +
-                   "%, session peak ring depth " +
-                   std::to_string(stats.peak_slots_in_use) + " of " +
-                   std::to_string(stats.slot_count) + " slots");
+    logger_->Debug(
+        "While this file was open: device lost " +
+        std::to_string(
+            Since(stats.device_dropped_words, device_drops_at_start_)) +
+        " samples in " +
+        std::to_string(
+            Since(stats.device_overflow_events, device_overflows_at_start_)) +
+        " overflows; session peak back pressure " +
+        std::to_string(stats.peak_back_pressure_percent) +
+        "%, session peak ring depth " +
+        std::to_string(stats.peak_slots_in_use) + " of " +
+        std::to_string(stats.slot_count) + " slots" +
+        (stats.sdram.present
+             ? ", session peak SDRAM fill " +
+                   capture::FormatDecimal(
+                       capture::SdramFillPercent(stats.sdram.peak_rows), 1) +
+                   "%" + (stats.sdram.overflow_seen ? " (overflowed)" : "")
+             : std::string()));
   }
 
   emit CaptureFinished(capture_path_, static_cast<quint64>(bytes));

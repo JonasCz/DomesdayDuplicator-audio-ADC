@@ -72,6 +72,7 @@ class StatisticsPanel : public QWidget {
   static constexpr const char* kExternalAudioLabelName =
       "statistics_external_audio";
   static constexpr const char* kAudioFilesLabelName = "statistics_audio_files";
+  static constexpr const char* kSdramBarName = "statistics_sdram";
 
   // See CapturePanel::kFreeSpaceIntervalMilliseconds — the same reasoning, and
   // deliberately the same figure, so the two panels never disagree about how
@@ -122,6 +123,7 @@ class StatisticsPanel : public QWidget {
   QLabel* integrated_audio_ = nullptr;
   QLabel* external_audio_ = nullptr;
   QLabel* audio_files_ = nullptr;
+  QProgressBar* sdram_ = nullptr;
 
   CaptureController* controller_ = nullptr;
 

@@ -20,6 +20,7 @@
 #include "fpga_telemetry.h"
 #include "framed_stream_validator.h"
 #include "sample_metrics.h"
+#include "sdram_status.h"
 #include "sequence_validator.h"
 #include "stream_validator.h"
 #include "transfer_result.h"
@@ -93,6 +94,11 @@ struct CaptureStats {
   // What has reached the audio files of the capture being written, if it is
   // writing any.
   AudioWriteSummary audio_written;
+
+  // The gateware's SDRAM buffer, as its in-band status reports it: present
+  // only for a framed stream from gateware that has one. The peak is the
+  // run's, for the reason peak_slots_in_use is.
+  SdramSnapshot sdram;
 
   // Test mode only, and nothing until a capture has run in it
   bool test_pattern_checked = false;

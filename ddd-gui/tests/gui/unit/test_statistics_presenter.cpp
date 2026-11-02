@@ -682,6 +682,84 @@ TEST(StatisticsPresenterTest, TheAudioFilesRowSaysWhatIsBeingDoneWithIt) {
             QStringLiteral("Recording both converters when capturing"));
 }
 
+// --- The device's SDRAM
+// -------------------------------------------------------
+
+capture::CaptureStats WithSdram(uint32_t now_rows, uint32_t peak_rows) {
+  capture::CaptureStats stats = FramedStats();
+  stats.sdram.present = true;
+  stats.sdram.current.present = true;
+  stats.sdram.current.active = true;
+  stats.sdram.current.initialised = true;
+  stats.sdram.current.fill_rows = now_rows;
+  stats.sdram.peak_rows = peak_rows;
+  stats.sdram.active_seen = true;
+  return stats;
+}
+
+TEST(StatisticsPresenterTest, TheSdramFillIsAShareASizeAndATime) {
+  // 8192 rows is a quarter: 8 MiB, and 105 ms of stream at 40 Msps.
+  const StatisticsView view = PresentStatistics(
+      WithSdram(1024, 8192), Undeclared(), capture::DeviceSpeed::kSuper);
+
+  EXPECT_EQ(view.sdram, QStringLiteral("now 3.1% (1.0 MiB, 13 ms), peak 25.0% "
+                                       "(8.0 MiB, 105 ms)"));
+  EXPECT_EQ(view.sdram_percent, 3);
+  EXPECT_TRUE(view.sdram_detail.contains(QStringLiteral("32.0 MiB")))
+      << view.sdram_detail.toStdString();
+  EXPECT_TRUE(view.sdram_detail.contains(QStringLiteral("419 ms")))
+      << view.sdram_detail.toStdString();
+}
+
+TEST(StatisticsPresenterTest, TheSdramsTimeIsAtTheRateTheStreamRuns) {
+  const StatisticsView view = PresentStatistics(
+      WithSdram(0, 8192), Undeclared(), capture::DeviceSpeed::kSuper, {},
+      capture::kEstimatedCaptureBytesPerSecond, 20'000'000);
+  EXPECT_TRUE(view.sdram.contains(QStringLiteral("210 ms")))
+      << view.sdram.toStdString();
+}
+
+TEST(StatisticsPresenterTest, AnSdramOverflowLeadsTheCaption) {
+  capture::CaptureStats stats = WithSdram(0, 32'768);
+  stats.sdram.overflow_seen = true;
+  const StatisticsView view =
+      PresentStatistics(stats, Undeclared(), capture::DeviceSpeed::kSuper);
+  EXPECT_TRUE(view.sdram.startsWith(QStringLiteral("Overflowed")))
+      << view.sdram.toStdString();
+}
+
+TEST(StatisticsPresenterTest, AnSdramTheStreamIsNotPassingThroughSaysSo) {
+  capture::CaptureStats stats = WithSdram(0, 0);
+  stats.sdram.current.active = false;
+  const StatisticsView view =
+      PresentStatistics(stats, Undeclared(), capture::DeviceSpeed::kSuper);
+  EXPECT_TRUE(view.sdram.startsWith(QStringLiteral("Bypassed")))
+      << view.sdram.toStdString();
+}
+
+TEST(StatisticsPresenterTest, GatewareWithNoSdramIsNotReportedRatherThanEmpty) {
+  // A framed stream with zero in its reserved slots, and a stream in the
+  // sequence-counter format: neither has an SDRAM to report on, and neither
+  // may look like one that is empty.
+  for (const capture::StreamFormat format :
+       {capture::StreamFormat::kFramed,
+        capture::StreamFormat::kSequenceCounter}) {
+    capture::CaptureStats stats = RunningStats();
+    stats.stream_format = format;
+    const StatisticsView view =
+        PresentStatistics(stats, Undeclared(), capture::DeviceSpeed::kSuper);
+    EXPECT_EQ(view.sdram, QStringLiteral("Not reported by this gateware"));
+    EXPECT_EQ(view.sdram_percent, 0);
+    EXPECT_TRUE(view.sdram_detail.isEmpty());
+  }
+
+  // And before the stream has been looked at, nothing is said either way.
+  EXPECT_EQ(PresentStatistics(RunningStats(), Undeclared(),
+                              capture::DeviceSpeed::kSuper)
+                .sdram,
+            None());
+}
+
 TEST(StatisticsPresenterTest, NothingAboutTheStreamIsShownBeforeItIsKnown) {
   const StatisticsView view = PresentStatistics(RunningStats(), Undeclared(),
                                                 capture::DeviceSpeed::kSuper);

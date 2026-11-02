@@ -90,6 +90,12 @@ AudioFrame SyntheticSource::AudioFor(uint64_t frame_index) {
   return frame;
 }
 
+uint32_t SyntheticSource::SdramStatusFor(uint64_t frame_index) {
+  constexpr uint64_t kFullRows = 32'768;
+  return (uint32_t{1} << 20) | (uint32_t{1} << 19) | (uint32_t{1} << 18) |
+         static_cast<uint32_t>(std::min(frame_index, kFullRows));
+}
+
 uint16_t SyntheticSource::NextSampleValue() {
   if (options_.pattern == Pattern::kRamp) {
     const uint16_t value = ramp_value_;
@@ -159,8 +165,23 @@ uint8_t SyntheticSource::NextFramedTopBits() {
             (external(frame_audio_.external_right) >> (6 * (13 - slot))) &
             0x3F);
         break;
+      case 4:
+      case 5:
+      case 14:
+      case 15: {
+        // The reserved slots: zero from audio-only gateware, and the SDRAM's
+        // status word from gateware with one — 36 and 37 its top twelve
+        // bits, 46 and 47 its bottom twelve.
+        const uint32_t word =
+            options_.framed_sdram ? SdramStatusFor(frame_index_) : 0;
+        const uint32_t shift = slot == 4    ? 18
+                               : slot == 5  ? 12
+                               : slot == 14 ? 6
+                                            : 0;
+        top = static_cast<uint8_t>((word >> shift) & 0x3F);
+        break;
+      }
       default:
-        // The reserved slots, which audio-only gateware leaves at zero.
         top = 0;
         break;
     }
