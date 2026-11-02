@@ -44,18 +44,27 @@ lint_waivers="$fpga/verible-waivers"
 # reformat, so a regeneration must not be able to drag vendor output into this gate by
 # appearing in a wildcard.
 #
+# application/applicationPll.v is not wizard output and is checked like everything else;
+# its one departure, the altpll parameter block written as defparam, is waived by name in
+# verible-waivers with the reason.
+#
 # version.vh is absent for a different reason: it is written by generate-version.sh,
 # so the generator's heredoc is what has to produce the right layout. The
 # fpga-version check is what covers it.
 files=(
     "$fpga/application/DomesdayDuplicator.v"
     "$fpga/application/adc128spiController.v"
+    "$fpga/application/applicationPll.v"
+    "$fpga/application/applicationPll_bb.v"
+    "$fpga/application/asyncFifo.v"
     "$fpga/application/buffer.v"
     "$fpga/application/bufferMonitor.v"
     "$fpga/application/dataGenerator.v"
     "$fpga/application/fifo.v"
     "$fpga/application/fx3StateMachine.v"
     "$fpga/application/pcm1802Slave.v"
+    "$fpga/application/sdramBuffer.v"
+    "$fpga/application/sdramController.v"
     "$fpga/common/spiRegisters.v"
     "$fpga/common/flashBridge.v"
     "$fpga/common/asmiBlock.v"
@@ -68,7 +77,9 @@ files=(
     "$fpga/factory/crc32.v"
     "$tests/adc128s022Model.v"
     "$tests/pcm1802Model.v"
+    "$tests/sdramModel.v"
     "$tests/tb_adc128spiController.v"
+    "$tests/tb_asyncFifo.v"
     "$tests/tb_audioCapture.v"
     "$tests/tb_buffer.v"
     "$tests/tb_bufferMonitor.v"
@@ -80,6 +91,9 @@ files=(
     "$tests/tb_flashBridge.v"
     "$tests/tb_fx3StateMachine.v"
     "$tests/tb_pcm1802Slave.v"
+    "$tests/tb_sdramBuffer.v"
+    "$tests/tb_sdramController.v"
+    "$tests/tb_sdramFramed.v"
     "$tests/tb_spiRegisters.v"
 )
 

@@ -59,6 +59,7 @@ proc record {name args} {
 foreach cmd {
     create_clock derive_pll_clocks create_generated_clock derive_clock_uncertainty
     set_output_delay set_input_delay set_multicycle_path set_false_path
+    set_max_delay set_min_delay
 } {
     proc $cmd {args} [format {record %s {*}$args} $cmd]
 }

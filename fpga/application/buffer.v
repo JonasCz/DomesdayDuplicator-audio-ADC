@@ -35,6 +35,22 @@
     cleared, so only the *first* overflow of a session was held. Every one
     after it raised the flag for a single cycle. That is fixed here.
 
+    With the SDRAM capture buffer in front of it (sdramBuffer.v), this is no
+    longer necessarily where a stall is paid for or where a sample is lost.
+    Three ports exist for that, and with the SDRAM path bypassed they reduce
+    to exactly the module above: sample_offered is then write_enable and
+    sample_lost is low.
+
+      - sample_offered says a sample left the sampling side on this edge,
+        wherever it went. The instrument counts samples by it, so its
+        near-full time and the end of an overflow run stay measured in
+        samples when the words arriving here come in bursts from the SDRAM.
+      - sample_lost says that sample was dropped before it reached this
+        buffer. It is an overflow like any other: it raises the error flag and
+        the instrument counts it.
+      - used_words is the occupancy, for a writer that can wait. The SDRAM
+        path waits, so in that mode this FIFO never overflows.
+
 ************************************************************************/
 
 module buffer (
@@ -46,12 +62,21 @@ module buffer (
     input        write_enable,
     input [15:0] data_in,
 
+    // A sample left the sampling side on this edge, and was lost before it
+    // reached this buffer. See the header.
+    input sample_offered,
+    input sample_lost,
+
     // High for each cycle the FX3 is taking a word off the databus
     input         is_reading,
     output [15:0] data_out,
 
     output reg data_available,
     output reg buffer_error,
+
+    // The occupancy, UsedBits wide (15 for 16384 words), for a writer that
+    // holds off rather than overflowing
+    output [14:0] used_words,
 
     // The back-pressure instrument. telemetry_latch samples it, and everything
     // else about it leaves this module read-only - see bufferMonitor.v.
@@ -95,14 +120,16 @@ module buffer (
     localparam [11:0] ErrorHoldZero = 12'd0;
     localparam [11:0] ErrorHoldOne = 12'd1;
 
-    wire [UsedBits-1:0] used_words;
+    wire [UsedBits-1:0] fifo_used_words;
     wire                fifo_full;
 
     // A write that arrives with the FIFO full is the overflow. The FIFO
     // discards it - that is its stated contract, so gating the request here as
     // well would be a second copy of the same decision - and this is only
-    // what raises the flag about it.
-    wire                overflow = write_enable && fifo_full;
+    // what raises the flag about it. A sample lost upstream is one too.
+    wire                overflow = (write_enable && fifo_full) || sample_lost;
+
+    assign used_words = fifo_used_words;
 
     fifo #(
         .DataWidth(16),
@@ -115,7 +142,7 @@ module buffer (
         .read_request (is_reading),
         .data_out     (data_out),
         .full         (fifo_full),
-        .used_words   (used_words)
+        .used_words   (fifo_used_words)
     );
 
     // The back-pressure instrument ------------------------------------------
@@ -131,8 +158,8 @@ module buffer (
     ) buffer_monitor_0 (
         .reset_n     (reset_n),
         .clock       (clock),
-        .used_words  (used_words),
-        .write_enable(write_enable),
+        .used_words  (fifo_used_words),
+        .write_enable(sample_offered),
         .overflow    (overflow),
         .is_reading  (is_reading),
         .latch       (telemetry_latch),
@@ -157,7 +184,7 @@ module buffer (
             data_available   <= 1'b0;
             packet_remaining <= PacketZero;
         end else if (!data_available) begin
-            if (used_words >= PacketThreshold) begin
+            if (fifo_used_words >= PacketThreshold) begin
                 data_available   <= 1'b1;
                 packet_remaining <= PacketCount;
             end

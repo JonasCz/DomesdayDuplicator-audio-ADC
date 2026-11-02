@@ -38,6 +38,10 @@ trap 'rm -rf "$work"' EXIT
 # start depending on a module nobody meant it to reach - and so that the
 # three trees stay visibly separate here as well as on disk.
 #
+# tests/sdramModel is this project's model of the DE0-Nano's SDRAM, which the two
+# SDRAM testbenches run the controller against. It lives beside the testbenches
+# rather than in common/sim because only the application image has an SDRAM.
+#
 # tb_bootLoader is the exception in size and the reason the list is explicit:
 # it builds the factory image's boot path exactly as the top level wires it,
 # down to a model of the EPCS64, because the decision it tests is the one
@@ -53,6 +57,10 @@ benches=(
     "tb_halfBandDecimator:application/halfBandDecimator"
     "tb_fifo:application/fifo"
     "tb_fx3StateMachine:application/fx3StateMachine"
+    "tb_asyncFifo:application/asyncFifo"
+    "tb_sdramController:application/sdramController,application/fifo,tests/sdramModel"
+    "tb_sdramBuffer:application/sdramBuffer,application/sdramController,application/asyncFifo,application/buffer,application/fifo,application/bufferMonitor,application/fx3StateMachine,tests/sdramModel"
+    "tb_sdramFramed:application/dataGenerator,application/sdramBuffer,application/sdramController,application/asyncFifo,application/buffer,application/fifo,application/bufferMonitor,application/fx3StateMachine,tests/sdramModel"
     "tb_spiRegisters:common/spiRegisters"
     "tb_crc32:factory/crc32"
     "tb_flashBridge:common/flashBridge,common/sim/epcsFlashModel"

@@ -25,7 +25,19 @@ module DomesdayDuplicator (
 
     // The 2x13 header JP3, which carries the PCM1802
     inout [12:0] GPIO_2,
-    input [ 2:0] GPIO_2_IN
+    input [ 2:0] GPIO_2_IN,
+
+    // The on-board SDRAM, under the DE0-Nano's own names for its pins
+    output [12:0] DRAM_ADDR,
+    output [ 1:0] DRAM_BA,
+    output        DRAM_CAS_N,
+    output        DRAM_CKE,
+    output        DRAM_CLK,
+    output        DRAM_CS_N,
+    inout  [15:0] DRAM_DQ,
+    output [ 1:0] DRAM_DQM,
+    output        DRAM_RAS_N,
+    output        DRAM_WE_N
 );
 
     // FX3 Hardware mapping begins ------------------------------------------------
@@ -150,7 +162,7 @@ module DomesdayDuplicator (
     // Databus           GPIO0:15         Output    - Databus
     // data_available    GPIO_17  CTL_00  Output    - FPGA signals if data is available for reading
     // reset_n           GPIO_27  CTL_10  Input     - FX3 signals (not) reset condition
-    // collect_data      GPIO_19  CTL_02  Input     - Unused
+    // collect_data      GPIO_19  CTL_02  Input     - FX3 signals a capture is running
     // read_data         GPIO_18  CTL_01  Input     - FX3 signals it is reading from the databus
     //
     // input0            GPIO_20  CTL_03  Output    - Buffer error flag from FPGA
@@ -171,6 +183,7 @@ module DomesdayDuplicator (
 
     // Wire definitions for FX3 GPIO mapping
     wire       fx3_reset_n;
+    wire       fx3_collect_data;
     wire       fx3_data_available;
     wire       fx3_read_data;
     wire       fx3_buffer_error;
@@ -193,7 +206,7 @@ module DomesdayDuplicator (
 
     // Signal inputs from FX3
     assign fx3_reset_n           = fx3_control[10];
-    //assign fx3_unused = fx3_control[02];
+    assign fx3_collect_data      = fx3_control[02];
     assign fx3_read_data         = fx3_control[01];
 
     // Signal inputs from FX3 (SPI register interface)
@@ -275,25 +288,41 @@ module DomesdayDuplicator (
 
     // PLL clock generation
     //
-    // One 80 MHz system clock from the 50 MHz physical clock, and the whole
-    // design runs from it. There is no second clock domain: the sampling rate
-    // is set by decimating this clock rather than by a clock of its own, which
-    // is what lets the FX3 drain faster than the ADC fills without the two
-    // sides having to be synchronised to each other.
+    // One 80 MHz system clock from the 50 MHz physical clock, and everything
+    // but the SDRAM controller runs from it. The sampling rate is set by
+    // decimating this clock rather than by a clock of its own, which is what
+    // lets the FX3 drain faster than the ADC fills without the two sides
+    // having to be synchronised to each other.
     //
     // 80 MHz because it is the lowest multiple of the 40 MSPS sampling rate
     // that leaves the FX3 room to catch up. The GPIF II interface is specified
     // to 100 MHz, so this is inside it; the ADC needs a uniform clock, so the
     // system clock has to be an exact multiple of the sampling rate, which
     // 60 MHz was not.
+    //
+    // The SDRAM capture buffer adds a second domain, at 120 MHz, for its
+    // controller alone: at 80 MHz the SDRAM cannot carry a capture going in and
+    // coming out at the same time. The two meet only through the dual-clock
+    // FIFOs and synchronisers in sdramBuffer. The third output is the 120 MHz
+    // clock shifted to lead, for the SDRAM's clock pin.
+    //
+    // This is applicationPll rather than the IPpllGenerator the factory image
+    // uses, so that adding the clocks changed nothing the factory image is
+    // built from - see the head of applicationPll.v.
     wire system_clock;
+    wire sdram_clock;
+    wire sdram_pin_clock;
+    wire pll_locked;
 
-    IPpllGenerator pll_generator_0 (
+    applicationPll pll_generator_0 (
         // Inputs
         .inclk0(CLOCK_50),
 
         // Outputs
-        .c0(system_clock)  // 80 MHz system clock
+        .c0    (system_clock),     // 80 MHz system clock
+        .c1    (sdram_clock),      // 120 MHz SDRAM controller clock
+        .c2    (sdram_pin_clock),  // 120 MHz, leading, for DRAM_CLK
+        .locked(pll_locked)        // 1 = the three clocks are stable
     );
 
     // The FX3's GPIF II is a synchronous slave and this pin is the clock it
@@ -334,17 +363,36 @@ module DomesdayDuplicator (
     // is what makes a reset work with no clock; releasing it synchronously is
     // new, and is what stops two registers coming out of reset on different
     // cycles because they resolved the same asynchronous edge differently.
+    //
+    // The PLL's lock holds it too, so nothing leaves reset on a clock that is
+    // still settling. Both clock domains are reset from this one source, each
+    // through a synchroniser of its own, because the dual-clock FIFOs between
+    // them must have both halves reset together.
+    wire       reset_source_n = fx3_reset_n && pll_locked;
+
     reg  [1:0] reset_n_sync;
 
-    always @(posedge system_clock, negedge fx3_reset_n) begin
-        if (!fx3_reset_n) begin
+    always @(posedge system_clock, negedge reset_source_n) begin
+        if (!reset_source_n) begin
             reset_n_sync <= 2'b00;
         end else begin
             reset_n_sync <= {reset_n_sync[0], 1'b1};
         end
     end
 
-    wire        reset_n = reset_n_sync[1];
+    wire       reset_n = reset_n_sync[1];
+
+    reg  [1:0] sdram_reset_n_sync;
+
+    always @(posedge sdram_clock, negedge reset_source_n) begin
+        if (!reset_source_n) begin
+            sdram_reset_n_sync <= 2'b00;
+        end else begin
+            sdram_reset_n_sync <= {sdram_reset_n_sync[0], 1'b1};
+        end
+    end
+
+    wire        sdram_reset_n = sdram_reset_n_sync[1];
 
     wire        fx3_is_reading;
     wire [15:0] data_generator_out;
@@ -387,6 +435,13 @@ module DomesdayDuplicator (
         .output_enable(capture_enable)   // 1 = a sample worth keeping
     );
 
+    // The SDRAM capture buffer's status, for the stream: layout version,
+    // whether the path is in use, whether the SDRAM is initialised, whether a
+    // sample has been lost to it since the capture started, and its fill in
+    // rows. The framed format carries it in the header's slots 36, 37, 46 and
+    // 47; framed-sample-format.md defines the word.
+    wire [23:0] sdram_status;
+
     // The audio converters' latest samples, and the frame slot they are
     // timed from
     wire [ 8:0] frame_position;
@@ -416,6 +471,7 @@ module DomesdayDuplicator (
         .adc128_right  (adc128_right),    // ADC128S022 IN1
         .pcm1802_left  (pcm1802_left),    // PCM1802 left
         .pcm1802_right (pcm1802_right),   // PCM1802 right
+        .status_word   (sdram_status),    // SDRAM capture buffer status
 
         // Outputs
         .data_out      (data_generator_out),  // 16-bit data out
@@ -469,13 +525,70 @@ module DomesdayDuplicator (
     wire [ 47:0] buffer_telemetry_geometry;
     wire         buffer_telemetry_latch;
 
+    // SDRAM capture buffer
+    //
+    // Between the sampling side and the FIFO buffer while the FX3 says a
+    // capture is running, and bypassed otherwise, so that a host that never
+    // asks for a capture gets exactly the buffering it always had. See
+    // sdram-capture-buffer.md for the design.
+    wire         buffer_write;
+    wire [ 15:0] buffer_data;
+    wire [ 14:0] buffer_used_words;
+    wire         sdram_sample_lost;
+
+    wire [ 15:0] sdram_dq_out;
+    wire         sdram_dq_oe;
+    wire [ 15:0] sdram_dq_in;
+
+
+    sdramBuffer sdram_buffer_0 (
+        // Inputs
+        .reset_n          (reset_n),             // Not reset, system clock domain
+        .clock            (system_clock),        // 80 MHz system clock
+        .collect_data     (fx3_collect_data),    // 1 = the FX3 is capturing
+        .sample_strobe    (capture_enable),      // 1 = a sample is offered this edge
+        .sample_data      (data_generator_out),  // 16-bit sample
+        .buffer_used_words(buffer_used_words),   // The FIFO buffer's occupancy
+        .sdram_reset_n    (sdram_reset_n),       // Not reset, SDRAM clock domain
+        .sdram_clock      (sdram_clock),         // 120 MHz SDRAM controller clock
+        .sdram_dq_in      (sdram_dq_in),         // SDRAM data in
+
+        // Outputs
+        .buffer_write(buffer_write),       // 1 = a word is written to the FIFO buffer
+        .buffer_data (buffer_data),        // and this is it
+        .sample_lost (sdram_sample_lost),  // 1 = the offered sample was dropped
+        .status      (sdram_status),       // For the stream
+        .sdram_cke   (DRAM_CKE),
+        .sdram_cs_n  (DRAM_CS_N),
+        .sdram_ras_n (DRAM_RAS_N),
+        .sdram_cas_n (DRAM_CAS_N),
+        .sdram_we_n  (DRAM_WE_N),
+        .sdram_ba    (DRAM_BA),
+        .sdram_addr  (DRAM_ADDR),
+        .sdram_dqm   (DRAM_DQM),
+        .sdram_dq_out(sdram_dq_out),
+        .sdram_dq_oe (sdram_dq_oe)
+    );
+
+    // The SDRAM data bus, driven only while the controller is writing. Both
+    // registers behind this are in the pins' I/O cells (the .qsf), as is the
+    // input register in the controller.
+    assign DRAM_DQ     = sdram_dq_oe ? sdram_dq_out : {16{1'bZ}};
+    assign sdram_dq_in = DRAM_DQ;
+
+    // The SDRAM's clock is the PLL's leading 120 MHz output, driven onto the
+    // pin directly
+    assign DRAM_CLK    = sdram_pin_clock;
+
     // FIFO buffer
     buffer buffer_0 (
         // Inputs
         .reset_n        (reset_n),                // Not reset
         .clock          (system_clock),           // 80 MHz system clock
-        .write_enable   (capture_enable),         // 1 = a sample is written this edge
-        .data_in        (data_generator_out),     // 16-bit ADC data bus input
+        .write_enable   (buffer_write),           // 1 = a word is written this edge
+        .data_in        (buffer_data),            // 16-bit word
+        .sample_offered (capture_enable),         // 1 = a sample left the sampling side
+        .sample_lost    (sdram_sample_lost),      // 1 = and was lost before it got here
         .is_reading     (fx3_is_reading),         // 1 = FX3 is reading data
         .telemetry_latch(buffer_telemetry_latch), // 1 = sample the instrument
 
@@ -483,6 +596,7 @@ module DomesdayDuplicator (
         .data_out          (fx3_databus),               // 16-bit data output
         .data_available    (fx3_data_available),        // Set if a whole packet is queued
         .buffer_error      (fx3_buffer_error),          // Set if a sample had to be dropped
+        .used_words        (buffer_used_words),         // Occupancy, for the SDRAM path
         .telemetry         (buffer_telemetry),          // The instrument's shadow bank
         .telemetry_geometry(buffer_telemetry_geometry)  // and the constants to read it by
     );

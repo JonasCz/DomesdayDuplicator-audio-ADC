@@ -3,8 +3,8 @@
 The application gateware's sample stream, as `dataGenerator.v` builds it with `FramedFormat`
 set — which `DomesdayDuplicator.v` does. Every 16-bit word still carries one RF sample in its
 low ten bits; the top six bits, which carried a six-bit sequence number, instead carry
-512-sample **frames** of a sync pattern, the latest audio from two audio converters, and a
-free-running 48-bit counter.
+512-sample **frames** of a sync pattern, the latest audio from two audio converters, a status
+word describing the SDRAM capture buffer, and a free-running 48-bit counter.
 
 **This page is the specification.** The format is a wire protocol with definitions in two
 components, kept apart deliberately (AGENTS.md §2), and both implement this page:
@@ -13,6 +13,7 @@ components, kept apart deliberately (AGENTS.md §2), and both implement this pag
 | --- | --- |
 | `fpga/application/dataGenerator.v` | The format: frame position, sync pattern, header, counter, the once-a-frame audio snapshot |
 | `fpga/application/adc128spiController.v`, `pcm1802Slave.v` | The audio the header carries, and its timing against the frame |
+| `fpga/application/sdramBuffer.v` | The status word the header carries — see [Status word](#status-word-slots-36-37-46-and-47) |
 | The capture engine's framed-format decoder in `ddd-gui/src/capture/` | The host's reading of it |
 
 Change the format here first, and then in both places, in one pull request.
@@ -44,9 +45,9 @@ A frame is 512 consecutive words. A slot is a word's position in its frame, 0 to
 | --- | --- | --- |
 | 0–31 | Sync pattern, 192 bits | least significant chunk first |
 | 32–35 | ADC128S022: left, then right; 12 bits each | most significant chunk first |
-| 36–37 | Reserved: bits 23:12 of a reserved 24-bit word, zero | most significant chunk first |
+| 36–37 | Status word, bits 23:12 | most significant chunk first |
 | 38–45 | PCM1802: left, then right; 24 bits each | most significant chunk first |
-| 46–47 | Reserved: bits 11:0 of the reserved word, zero | most significant chunk first |
+| 46–47 | Status word, bits 11:0 | most significant chunk first |
 | 48–511 | Counter: 58 values of 48 bits | least significant chunk first |
 
 Every slot carries six bits. Note that the two orders differ: the sync pattern and the counter
@@ -83,8 +84,8 @@ and slot by slot, 0 to 31, the six-bit values are:
 | 33 | ADC128S022 left `[5:0]` |
 | 34 | ADC128S022 right `[11:6]` |
 | 35 | ADC128S022 right `[5:0]` |
-| 36 | reserved word `[23:18]` — zero |
-| 37 | reserved word `[17:12]` — zero |
+| 36 | status word `[23:18]` |
+| 37 | status word `[17:12]` |
 | 38 | PCM1802 left `[23:18]` |
 | 39 | PCM1802 left `[17:12]` |
 | 40 | PCM1802 left `[11:6]` |
@@ -93,22 +94,55 @@ and slot by slot, 0 to 31, the six-bit values are:
 | 43 | PCM1802 right `[17:12]` |
 | 44 | PCM1802 right `[11:6]` |
 | 45 | PCM1802 right `[5:0]` |
-| 46 | reserved word `[11:6]` — zero |
-| 47 | reserved word `[5:0]` — zero |
+| 46 | status word `[11:6]` |
+| 47 | status word `[5:0]` |
 
 The ADC128S022 values are unsigned straight binary, 0 to 4095 across 0 V to the converter's
 3.3 V reference; silence is mid-scale, so a host subtracts 2048. The PCM1802 values are 24-bit
 two's complement, so a host sign-extends bit 23.
 
-The four reserved slots read zero. They are reserved as one 24-bit word, most significant six
-bits in slot 36 and least significant in slot 47, so that something can be carried there later
-without moving anything else; until this page defines it, a host must ignore it.
+**Every frame's header is one coherent snapshot.** The gateware copies all four audio values and
+the status word in one clock edge, on the sample that loads slot 0, and holds them for the whole
+frame, so a value's four slots — or two — can never come from two different samples, left and
+right are always a pair, and the status word's four slots are always one word. The fork latched
+each converter's output whenever it changed, which could split a value across two samples.
 
-**Every frame's header is one coherent snapshot.** The gateware copies all four audio values in
-one clock edge, on the sample that loads slot 0, and holds them for the whole frame, so a
-value's four slots — or two — can never come from two different samples, and left and right are
-always a pair. The fork latched each converter's output whenever it changed, which could split
-a value across two samples.
+### Status word, slots 36, 37, 46 and 47
+
+One 24-bit word, most significant six bits in slot 36 and least significant in slot 47:
+
+```
+S = (slot36 << 18) | (slot37 << 12) | (slot46 << 6) | slot47
+```
+
+| Bits | Meaning |
+| --- | --- |
+| 23:20 | **Layout version.** 0: no status word — what gateware without the SDRAM capture buffer sends, and what the fork sent, both of which carry zero here; a host must ignore bits 19:0. 1: the layout below. Anything else is a layout this page does not define yet; a host must ignore bits 19:0 |
+| 19 | The SDRAM capture buffer is carrying the samples. Low while the FX3's `collect_data` is low, until the SDRAM is initialised, and until the path has been emptied after a stop — the samples then go straight to the on-chip buffer, as they did before the SDRAM was used |
+| 18 | The SDRAM has been initialised. It stays set until the FPGA is reset |
+| 17 | A sample has been lost at the SDRAM since `collect_data` last rose: the SDRAM was full. Sticky; cleared only by the next rise of `collect_data`, the FX3's start of a capture. A loss is also counted by the capture buffer telemetry and raises `bufferError`, exactly as an overflow of the on-chip buffer does |
+| 16 | Reserved, zero |
+| 15:0 | **Fill**: rows of 512 samples held in the SDRAM, 0 to 32768. 32768 is full: 0.42 s of samples at 40 Msps, 0.84 s decimating |
+
+What the fill describes, and when:
+
+- It is sampled when the frame **enters** the capture path — at the generator, before the
+  SDRAM — so it is the backlog the frame queued behind, not the backlog when it reached the
+  host. It is delivered after that backlog. Read across frames, it shows how far behind the
+  host was falling, sample by sample, which is what a host wants for "how close did this come".
+- It counts the SDRAM only. Up to about 12,300 more samples sit in the path's two FIFOs and the
+  on-chip buffer, about 0.3 ms at 40 Msps; a fill of zero means less than that is queued.
+- In steady state it reads 0 or 1: each row is written and then read straight back.
+- While bit 19 is low the fill is zero or falling to zero: the path is not in use, and its
+  contents are being discarded after a stop.
+
+The word is produced by `sdramBuffer.v`, in the system clock domain, from values crossed from
+the SDRAM controller's clock at least every few hundred nanoseconds — far more often than the
+12.8 µs a frame lasts, so each frame's snapshot is current. The design is in
+[sdram-capture-buffer.md](sdram-capture-buffer.md).
+
+The first frame after reset carries zero here, as it does in the audio slots: nothing has been
+snapshotted yet.
 
 ### Counter, slots 48–511
 
@@ -226,8 +260,10 @@ Its digital supply is 3.3 V, which matches the FPGA's 3.3-V LVTTL pins; its anal
 
 ## Changes from the fork
 
-The format is unchanged. These are the differences in how it is produced, each of which a
-capture from the fork could show:
+The layout is unchanged; the four slots the fork sent as zero now carry the status word, and a
+zero there reads as layout version 0, "no status word", so a fork capture and a capture from
+gateware without the SDRAM buffer both say so in the same way. These are the differences in
+how the format is produced, each of which a capture from the fork could show:
 
 - **PCM1802 left and right.** In the left-justified format LRCK is high for the left channel
   (PCM1802 datasheet, Figure 23); low is left in I2S. The fork took LRCK low as left, so a fork
@@ -253,11 +289,12 @@ In simulation only, so far. The testbenches are under `fpga/tests/`:
 
 | Testbench | Checks |
 | --- | --- |
-| `tb_dataGeneratorFramed.v` | Every slot of every frame, decoded independently of the gateware's own constants; the counter across frames and through a 48-bit wrap; snapshot coherency against inputs that change during the header; the decimator's enable cadence and the frame across two changes of rate |
+| `tb_dataGeneratorFramed.v` | Every slot of every frame, decoded independently of the gateware's own constants; the counter across frames and through a 48-bit wrap; snapshot coherency of the audio and the status word against inputs that change during the header, with every status bit changing between snapshots; the decimator's enable cadence and the frame across two changes of rate |
 | `tb_adc128spiController.v` | The ADC128S022 interface against a model that checks the datasheet's timing on every edge, at both rates |
 | `tb_pcm1802Slave.v` | The PCM1802 interface against a model that checks the datasheet's timing on every edge, at both rates and across changes of rate |
 | `tb_audioCapture.v` | The whole path, decimator to stream, at both rates: that frame N carries what the converters produced in frame N − 1, as a fixed count |
-| `tb_dataGenerator.v` | That the unframed format is unchanged |
+| `tb_sdramFramed.v` | The status word end to end: the generator in this format feeding the SDRAM capture buffer, read back by a consumer that decodes every frame from the words alone. Each frame's status word is, bit for bit, the one the buffer presented when the frame was started; the version is 1, initialisation precedes the path being in use, nothing is reported lost, and the fill rises through a stall and returns to steady state |
+| `tb_dataGenerator.v` | That the unframed format is unchanged, with the status word input moving on every clock |
 
 The converter models are `tests/adc128s022Model.v` and `tests/pcm1802Model.v`.
 

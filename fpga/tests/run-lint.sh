@@ -27,7 +27,8 @@ waivers="$fpga/verilator-waivers.vlt"
 # IPpllGenerator.v is deliberately absent: it instantiates Altera's altpll,
 # which has no free simulation model, so there is nothing to lint it against.
 # The black-box declaration beside it is enough for the two top levels, which
-# are the only modules that instantiate the IP.
+# are the only modules that instantiate the IP. applicationPll.v, the capture
+# gateware's own PLL, is absent for the same reason and stands in the same way.
 #
 # The FIFO used to need the same treatment. fifo.v replaced the dcfifo it was
 # built on, so it is an ordinary module in the list below.
@@ -39,6 +40,7 @@ waivers="$fpga/verilator-waivers.vlt"
 modules=(
     "application:DomesdayDuplicator"
     "application:adc128spiController"
+    "application:asyncFifo"
     "application:buffer"
     "application:bufferMonitor"
     "application:dataGenerator"
@@ -46,6 +48,8 @@ modules=(
     "application:fx3StateMachine"
     "application:halfBandDecimator"
     "application:pcm1802Slave"
+    "application:sdramBuffer"
+    "application:sdramController"
     "common:spiRegisters"
     "common:flashBridge"
     "common:asmiBlock"
@@ -57,6 +61,7 @@ modules=(
 
 blackboxes=(
     "$fpga/common/IPpllGenerator_bb.v"
+    "$fpga/application/applicationPll_bb.v"
 )
 
 # Every module the list above may instantiate, so a top level elaborates
@@ -73,6 +78,7 @@ filtered=()
 for source in "${sources[@]}"; do
     case "$source" in
     */IPpllGenerator.v | */IPpllGenerator_bb.v) continue ;;
+    */applicationPll.v | */applicationPll_bb.v) continue ;;
     esac
     filtered+=("$source")
 done

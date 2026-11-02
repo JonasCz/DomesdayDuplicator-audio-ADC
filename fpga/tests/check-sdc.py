@@ -29,8 +29,14 @@ import sys
 # The roles the FX3 control bus carries, from the signal map in the top level.
 DATA_AVAILABLE, BUFFER_ERROR, SPI_MISO = 0, 3, 7
 READ_DATA, SPI_CLOCK, SPI_MOSI, SPI_CHIP_SELECT_N, RESET_N = 1, 5, 6, 8, 10
+# collectData: a level with no clock relationship, synchronised in the
+# gateware, so it is false-pathed like the SPI inputs rather than timed
+COLLECT_DATA = 2
 UNUSED_OUTPUTS = (4, 11, 12)
-UNUSED_INPUTS = (2, 9)
+UNUSED_INPUTS = (9,)
+
+# The SDRAM's clock pin, constrained by create_generated_clock
+SDRAM_CLOCK_PORT = "DRAM_CLK"
 
 # The two pins that carry a clock out of the FPGA. They are constrained by
 # create_generated_clock rather than by a delay, so they are checked for
@@ -139,6 +145,58 @@ def check_audio(top, sdc):
     return failed
 
 
+def read_sdram_ports(top):
+    """The top level's DRAM_* ports, split into outputs and bidirectionals."""
+    header = re.search(r"module DomesdayDuplicator \((.*?)\);", top, re.S).group(1)
+    outputs, inouts = set(), set()
+    for direction, name in re.findall(r"\b(output|inout)\s+(?:\[[^]]*\]\s*)?(DRAM_\w+)", header):
+        (outputs if direction == "output" else inouts).add(name)
+    return outputs, inouts
+
+
+def sdc_sdram_group(sdc, name):
+    """The DRAM_* port names in `set <name> [get_ports { ... }]`, bus suffixes dropped."""
+    match = re.search(rf"set {name} \[get_ports \{{(.*?)\}}\]", sdc, re.S)
+    if not match:
+        sys.exit(f"the SDC has no port group called {name}")
+    return set(re.findall(r"(DRAM_\w+?)(?:\[\*\])?(?=[\s\\]|$)", match.group(1)))
+
+
+def check_sdram(top, sdc):
+    """Every SDRAM pin is timed, as what it is."""
+    outputs, inouts = read_sdram_ports(top)
+    if not outputs or not inouts:
+        print("  FAIL  could not read the SDRAM ports from the top level")
+        return True
+
+    failed = False
+    expected = {
+        "SDRAM outputs": (
+            (outputs - {SDRAM_CLOCK_PORT}) | inouts,
+            sdc_sdram_group(sdc, "sdram_outputs"),
+        ),
+        "SDRAM inputs": (inouts, sdc_sdram_group(sdc, "sdram_inputs")),
+    }
+    for label, (want, got) in expected.items():
+        missing, extra = want - got, got - want
+        status = "OK" if not missing and not extra else "FAIL"
+        if status == "FAIL":
+            failed = True
+        print(f"  {status:4}  {label}: {len(got)} of {len(want)} ports")
+        if missing:
+            print(f"          missing from the SDC: {sorted(missing)}")
+        if extra:
+            print(f"          not in the top level: {sorted(extra)}")
+
+    if SDRAM_CLOCK_PORT in outputs and f"[get_ports {{{SDRAM_CLOCK_PORT}}}]" not in sdc:
+        print(f"  FAIL  {SDRAM_CLOCK_PORT} carries a clock but the SDC never names it")
+        failed = True
+    else:
+        print(f"  OK    {SDRAM_CLOCK_PORT} carries a defined clock")
+
+    return failed
+
+
 def sdc_false_paths(sdc):
     found = re.findall(
         r"set_false_path -(?:from|to) \[get_ports \{(GPIO\d\[\d+\]|LED\[\*\])\}\]", sdc
@@ -232,6 +290,7 @@ def main():
                 control_in[SPI_CHIP_SELECT_N],
                 control_in[RESET_N],
                 control_out[SPI_MISO],
+                control_in[COLLECT_DATA],
                 "LED[*]",
             }
             | {control_in[i] for i in UNUSED_INPUTS}
@@ -257,6 +316,9 @@ def main():
         if f"[get_ports {{{pin}}}]" not in sdc:
             print(f"  FAIL  {pin} carries a clock but the SDC never names it")
             failed = True
+
+    if check_sdram(top, sdc):
+        failed = True
 
     mapped = databus | adc_data | set(control_out.values()) | set(control_in.values())
     accounted = set().union(*(got for _, got in expected.values())) | set(CLOCK_OUTPUT_PINS)

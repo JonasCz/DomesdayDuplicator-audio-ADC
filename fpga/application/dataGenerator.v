@@ -26,11 +26,11 @@
          the default, and the format the host's sequence validator reads.
 
       1  the framed format: 512-sample frames whose top six bits carry a
-         192-bit sync pattern, the two audio converters' latest samples and a
-         free-running 48-bit counter. The layout is specified, slot by slot,
-         in framed-sample-format.md beside this file, which is the one place
-         it is defined; the frame position, the header and the counter below
-         implement that page and nothing else.
+         192-bit sync pattern, the two audio converters' latest samples, a
+         24-bit status word and a free-running 48-bit counter. The layout is
+         specified, slot by slot, in framed-sample-format.md beside this
+         file, which is the one place it is defined; the frame position, the
+         header and the counter below implement that page and nothing else.
 
     Both formats are always built and the parameter picks one at the output,
     so that a lint of this module checks the logic of both. Synthesis keeps
@@ -54,6 +54,12 @@ module dataGenerator #(
     input [11:0] adc128_right,  // ADC128S022 IN1, unsigned
     input [23:0] pcm1802_left,  // PCM1802 left, two's complement
     input [23:0] pcm1802_right, // PCM1802 right, two's complement
+
+    // The status word the framed format's header carries in slots 36, 37, 46
+    // and 47 - the SDRAM capture buffer's, in the application image. Its
+    // layout is framed-sample-format.md's; this module only carries it. The
+    // default format does not read it either.
+    input [23:0] status_word,
 
     // Outputs
     output [15:0] data_out,
@@ -168,12 +174,6 @@ module dataGenerator #(
     localparam [8:0] HeaderFirst = 9'd32;
     localparam [8:0] CounterFirst = 9'd48;
 
-    // A word the header reserves, at slots 36, 37, 46 and 47, six bits each
-    // and most significant first. Nothing is assigned to carry there yet, so
-    // it is zero; giving it a meaning is a new input, snapshotted beside the
-    // audio below, in place of this constant.
-    wire [23:0] reserved_word = 24'd0;
-
     // The frame slot of the sample on data_out, and the slot whose metadata
     // is loaded with the next sample.
     reg  [ 8:0] position;
@@ -197,6 +197,11 @@ module dataGenerator #(
     reg  [23:0] pcm1802_left_frame;
     reg  [23:0] pcm1802_right_frame;
 
+    // The status word, snapshotted with the audio for the same reason: its
+    // four slots are spread across the header, and a word that changed
+    // between slot 37 and slot 46 would be half one value and half another.
+    reg  [23:0] status_word_frame;
+
     // Each region's metadata for the slot being loaded. The sync pattern and
     // the counter are indexed by slot; the header is a table.
     wire [ 7:0] sync_offset = {3'b000, next_position[4:0]} * 8'd6;
@@ -211,8 +216,8 @@ module dataGenerator #(
             4'd1:    header_chunk = adc128_left_frame[5:0];
             4'd2:    header_chunk = adc128_right_frame[11:6];
             4'd3:    header_chunk = adc128_right_frame[5:0];
-            4'd4:    header_chunk = reserved_word[23:18];
-            4'd5:    header_chunk = reserved_word[17:12];
+            4'd4:    header_chunk = status_word_frame[23:18];
+            4'd5:    header_chunk = status_word_frame[17:12];
             4'd6:    header_chunk = pcm1802_left_frame[23:18];
             4'd7:    header_chunk = pcm1802_left_frame[17:12];
             4'd8:    header_chunk = pcm1802_left_frame[11:6];
@@ -221,8 +226,8 @@ module dataGenerator #(
             4'd11:   header_chunk = pcm1802_right_frame[17:12];
             4'd12:   header_chunk = pcm1802_right_frame[11:6];
             4'd13:   header_chunk = pcm1802_right_frame[5:0];
-            4'd14:   header_chunk = reserved_word[11:6];
-            default: header_chunk = reserved_word[5:0];
+            4'd14:   header_chunk = status_word_frame[11:6];
+            default: header_chunk = status_word_frame[5:0];
         endcase
     end
 
@@ -243,6 +248,7 @@ module dataGenerator #(
             adc128_right_frame  <= 12'd0;
             pcm1802_left_frame  <= 24'd0;
             pcm1802_right_frame <= 24'd0;
+            status_word_frame   <= 24'd0;
         end else if (sample_enable) begin
             position <= next_position;
             metadata <= next_metadata;
@@ -259,6 +265,7 @@ module dataGenerator #(
                 adc128_right_frame  <= adc128_right;
                 pcm1802_left_frame  <= pcm1802_left;
                 pcm1802_right_frame <= pcm1802_right;
+                status_word_frame   <= status_word;
             end
         end
     end

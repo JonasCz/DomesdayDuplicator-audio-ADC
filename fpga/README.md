@@ -59,14 +59,18 @@ Inside `application/`:
 | `DomesdayDuplicator.v` | Top level: pin mapping and module wiring. Builds `dataGenerator.v` in the framed sample format |
 | `DomesdayDuplicator.qsf` | Quartus settings — device, pin assignments, source list |
 | `DomesdayDuplicator.qpf` | Quartus project file |
-| `DomesdayDuplicator.SDC` | Timing constraints. Checked by `tests/run-sdc.sh`; the I/O delay values in its header are pessimistic placeholders pending the datasheets. The audio converters' pins are false paths, with the margins that make that safe argued beside them |
+| `DomesdayDuplicator.SDC` | Timing constraints. Checked by `tests/run-sdc.sh`; the FX3 and ADC I/O delay values in its header are pessimistic placeholders pending the datasheets, while the SDRAM's are the datasheet's figures plus a stated board estimate. The audio converters' pins are false paths, with the margins that make that safe argued beside them |
+| `applicationPll.v` | This image's PLL: the 80 MHz system clock, exactly as `IPpllGenerator` makes it, plus the SDRAM controller's 120 MHz and a leading copy of it for `DRAM_CLK`. A file of its own so that adding clocks did not change what the factory image is built from; `applicationPll_bb.v` is its black box for lint |
+| `sdramBuffer.v` | The SDRAM capture buffer: the bypass while `collect_data` is low, the flush handshake, the two FIFOs, the controller and the status word. Design, budgets and coverage: [sdram-capture-buffer.md](application/sdram-capture-buffer.md) |
+| `sdramController.v` | The DE0-Nano's SDRAM as a ring of 512-word rows, at 120 MHz |
+| `asyncFifo.v` | The dual-clock Gray-pointer FIFO the samples cross between 80 and 120 MHz in |
 | `DomesdayDuplicator.cof` | Conversion to the raw image bytes a device update writes. Its `rpd_little_endian` setting decides the bit orientation of those bytes and is load-bearing — read the comment beside it before changing anything here |
 | `halfBandDecimator.v` | The 10 MHz anti-alias filter and 2:1 decimation, for tape capture at 20 Msps. In front of `dataGenerator.v`, so the sequence counter, the frame and the test ramp are attached to the samples that survive, and the audio is ticked at the rate they leave. The design, the measured response and the phase are on [The decimation filter](../docs/content/development/fpga-decimation-filter.md) |
-| `dataGenerator.v` | ADC sampling and the built-in test-data generator, and what bits 15:10 carry: the six-bit sequence number by default, or with `FramedFormat` set the framed sample format — sync pattern, audio and a 48-bit counter in 512-sample frames |
+| `dataGenerator.v` | ADC sampling and the built-in test-data generator, and what bits 15:10 carry: the six-bit sequence number by default, or with `FramedFormat` set the framed sample format — sync pattern, audio, the SDRAM capture buffer's status word and a 48-bit counter in 512-sample frames |
 | [`framed-sample-format.md`](application/framed-sample-format.md) | **The specification of the framed sample format**, and the one place it is defined: the frame layout slot by slot, the audio rates and timing, the converters' wiring and straps, and how it differs from the fork it comes from |
 | `adc128spiController.v` | The DE0-Nano's on-board ADC128S022, read as left and right audio once per frame. Timed from the frame slot, on the system clock |
 | `pcm1802Slave.v` | A PCM1802 on header JP3, in slave mode with the FPGA supplying its clocks, read as 24-bit stereo once per frame. Timed from the frame slot, on the system clock |
-| `buffer.v` | Sample buffering between the sampling side and the FX3 |
+| `buffer.v` | Sample buffering between the sampling side and the FX3. Behind the SDRAM capture buffer while a capture runs, which holds it at one packet and reports its own losses through it |
 | `fifo.v` | The single-clock FIFO `buffer.v` is built from |
 | `bufferMonitor.v` | What the buffer did, reported at registers `0x40`–`0x56`. An observer: every port but the sampling pulse is an output, and that pulse reaches nothing outside this module |
 | `fx3StateMachine.v` | GPIF II handshake with the FX3 |
@@ -80,7 +84,7 @@ Inside `common/`:
 | `asmiBlock.v` | Access to the configuration flash pins, which are not user I/O |
 | `remoteUpdate.v` | Reconfiguration and the configuration watchdog, register `0x23`, and the block's read-back of its own setup at `0x30`–`0x37` |
 | `version.vh` | Generated build stamp the register bank reports; regenerated into the build directory by `generate-version.sh` |
-| `IPpllGenerator.v` | Instantiation of the Altera `altpll` primitive |
+| `IPpllGenerator.v` | Instantiation of the Altera `altpll` primitive. The factory image's PLL; the application image has its own, `applicationPll.v` |
 | `sim/` | Behavioural models of the two device primitives and of the EPCS64 itself, so the free tools can simulate what the real parts do. Test fixtures; never compiled into a bitstream |
 
 Inside `factory/`: the top level, the boot decision (`bootLoader.v`), the checksum it
@@ -154,7 +158,7 @@ beside the sources are its only configuration:
 | --- | --- |
 | [.verible-format](.verible-format) | Formatter settings. Four-space indent, 100 columns, every alignment mode set explicitly rather than left at Verible's `infer` |
 | [.rules.verible_lint](.rules.verible_lint) | Style rules — Verible's defaults, plus `signal-name-style` and `explicit-begin`, minus the SystemVerilog-only rules. Every departure carries its reason |
-| [verible-waivers](verible-waivers) | Narrow per-case exceptions: the DE0-Nano port names, and the megafunction model's parameter names |
+| [verible-waivers](verible-waivers) | Narrow per-case exceptions: the DE0-Nano's port, audio converter and SDRAM pin names, the megafunction model's parameter names, and the application PLL's `defparam` block and black box |
 
 `verible-verilog-ls` is a language server that finds `.rules.verible_lint` by searching
 upward, so any editor with an LSP client shows the same diagnostics the CI check enforces,
@@ -174,9 +178,16 @@ gateware cleanup, but that belongs in a change whose gate is a capture-integrity
 hardware.
 
 **What is not covered:** the top level, because it instantiates `altpll` through
-`IPpllGenerator` and simulating that needs Altera's `altera_mf` library, which has no free
-model. `IPpllGenerator.v` is not even linted for the same reason; the black-box declaration
-beside it (`IPpllGenerator_bb.v`) is what lets the top level elaborate.
+`IPpllGenerator` (or, in the application image, `applicationPll`) and simulating that needs
+Altera's `altera_mf` library, which has no free model. Neither PLL file is linted for the
+same reason; the black-box declaration beside each (`IPpllGenerator_bb.v`,
+`applicationPll_bb.v`) is what lets the top levels elaborate.
+
+The SDRAM capture buffer is simulated end to end below the top level, against this
+project's own model of the part, `tests/sdramModel.v`, which checks the controller against
+the datasheet's timing as it runs. What a model cannot show — the board's I/O timing, and
+the part itself — is listed in
+[sdram-capture-buffer.md](application/sdram-capture-buffer.md).
 
 `buffer.v` used to be exempt for the same reason — it was two `dcfifo` instances — and
 replacing that IP with `fifo.v` is what brought the capture path into the testbench suite.

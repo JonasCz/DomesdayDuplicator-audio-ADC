@@ -65,7 +65,19 @@ module tb_dataGenerator;
         adc_clock_divider <= ~adc_clock_divider;
     end
 
-    wire sample_enable = ~adc_clock_divider;
+    wire        sample_enable = ~adc_clock_divider;
+
+    // The framed format's status word, moving on every clock. The default
+    // format must not carry any of it, so every check below is also a check
+    // that it does not reach bits 15:10.
+    reg  [23:0] status_word;
+
+    initial begin
+        status_word = 24'hA5A5A5;
+    end
+    always @(posedge clock) begin
+        status_word <= {status_word[22:0], status_word[23]} ^ 24'h000001;
+    end
 
     dataGenerator dut (
         .reset_n       (reset_n),
@@ -73,6 +85,7 @@ module tb_dataGenerator;
         .sample_enable (sample_enable),
         .adc_databus   (adc_databus),
         .test_mode_flag(test_mode_flag),
+        .status_word   (status_word),
         .data_out      (data_out)
     );
 

@@ -46,6 +46,14 @@ waive --rule=signal-name-style --regex="\b(CLOCK_50|GPIO0|GPIO1|LED)\b" --locati
 # Only the application image has them, so only its top level is waived.
 waive --rule=signal-name-style --regex="\b(ADC_CS_N|ADC_SADDR|ADC_SCLK|ADC_SDAT|GPIO_2|GPIO_2_IN)\b" --location=".*DomesdayDuplicator\.v"
 
+# The capture gateware's top level also has the DE0-Nano's SDRAM pins, under Terasic's
+# names for them - DRAM_ADDR, DRAM_BA, DRAM_CAS_N, DRAM_CKE, DRAM_CLK, DRAM_CS_N,
+# DRAM_DQ, DRAM_DQM, DRAM_RAS_N and DRAM_WE_N - for the same two reasons: the .qsf
+# binds them by name, 39 pins of location and I/O standard plus the I/O cell register
+# assignments, and they are the names in the board's manual and reference project.
+# Scoped to those ten names and to that one top level; the factory image has no SDRAM.
+waive --rule=signal-name-style --regex="\bDRAM_(ADDR|BA|CAS_N|CKE|CLK|CS_N|DQ|DQM|RAS_N|WE_N)\b" --location=".*DomesdayDuplicator\.v"
+
 # ---------------------------------------------------------------------------
 # The megafunction's own parameter names
 # ---------------------------------------------------------------------------
@@ -63,3 +71,30 @@ waive --rule=signal-name-style --regex="\b(ADC_CS_N|ADC_SADDR|ADC_SCLK|ADC_SDAT|
 # Scoped to that one file. A parameter anywhere else, including elsewhere in
 # common/sim, is still held to the convention.
 waive --rule=parameter-name-style --location=".*sim/altremote_update\.v"
+
+# ---------------------------------------------------------------------------
+# The application PLL's parameter block
+# ---------------------------------------------------------------------------
+#
+# application/applicationPll.v instantiates altpll and sets its parameters with
+# defparam, which the lowRISC guide forbids in favour of #( ) overrides. The file is
+# written in the MegaWizard's idiom on purpose, so that it reads side by side with
+# common/IPpllGenerator.v - the same parameters in the same form - and a change to one
+# PLL can be checked against the other line by line. That is worth more here than the
+# rule, which exists to stop parameters being set from a distance in a design's own
+# hierarchy; this is one megafunction's parameters set beside its one instantiation.
+#
+# Scoped to that one file. A defparam anywhere else is still reported.
+waive --rule=forbid-defparam --location=".*application/applicationPll\.v"
+
+# ---------------------------------------------------------------------------
+# The application PLL's black box
+# ---------------------------------------------------------------------------
+#
+# application/applicationPll_bb.v declares module applicationPll, which is what a
+# black box is: the same module name as the file it stands in for, so the top level's
+# instantiation resolves to it when linting and to applicationPll.v when compiling.
+# Naming the module after this file would make it stand in for nothing. The
+# correctness linter's equivalent finding is waived for the same reason in
+# verilator-waivers.vlt.
+waive --rule=module-filename --location=".*application/applicationPll_bb\.v"

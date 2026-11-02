@@ -83,16 +83,26 @@ module tb_buffer;
     wire    [ 15:0] telemetry_peak = telemetry[47:32];
     wire    [ 15:0] telemetry_dropped = telemetry[95:80];
 
+    // The SDRAM capture buffer's ports, wired as the top level wires them
+    // while that path is bypassed: every sample offered is the one written,
+    // and none is lost on the way. That is the module as it was before the
+    // ports existed, which is what this testbench checks. The SDRAM path's
+    // use of them is tb_sdramBuffer's.
+    wire    [ 14:0] used_words;
+
     buffer dut (
         .reset_n           (reset_n),
         .clock             (clock),
         .write_enable      (write_enable),
         .data_in           (data_in),
+        .sample_offered    (write_enable),
+        .sample_lost       (1'b0),
         .is_reading        (is_reading),
         .telemetry_latch   (telemetry_latch),
         .data_out          (data_out),
         .data_available    (data_available),
         .buffer_error      (buffer_error),
+        .used_words        (used_words),
         .telemetry         (telemetry),
         .telemetry_geometry(telemetry_geometry)
     );
@@ -217,6 +227,7 @@ module tb_buffer;
         write_samples(1);
         idle(4);
         check(data_available, 32'd1, "data_available once a whole packet is queued");
+        check({17'd0, used_words}, PACKET_WORDS, "used_words is the occupancy");
         check(buffer_error, 32'd0, "buffer_error after an ordinary fill");
 
         // --- One packet, drained --------------------------------------------

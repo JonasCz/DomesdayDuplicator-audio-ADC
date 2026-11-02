@@ -43,12 +43,20 @@
 // all — see fpga/README.md.
 //
 // There were two of these until fifo.v replaced the dcfifo the buffer was built
-// on. One black box is left, so these are scoped to it by name rather than to
-// any file ending in _bb.v.
+// on. Now there are two again, for a different reason: the capture gateware has
+// a PLL of its own, applicationPll.v, so that the clocks the SDRAM capture
+// buffer needs could be added without touching IPpllGenerator.v, which the
+// factory image is built from. The same three findings apply to its black box
+// for the same reason, and both are scoped by name rather than to any file
+// ending in _bb.v.
 
 lint_off -rule DECLFILENAME -file "*IPpllGenerator_bb.v"
 lint_off -rule UNUSEDSIGNAL -file "*IPpllGenerator_bb.v"
 lint_off -rule UNDRIVEN     -file "*IPpllGenerator_bb.v"
+
+lint_off -rule DECLFILENAME -file "*applicationPll_bb.v"
+lint_off -rule UNUSEDSIGNAL -file "*applicationPll_bb.v"
+lint_off -rule UNDRIVEN     -file "*applicationPll_bb.v"
 
 // ---------------------------------------------------------------------------
 // 1b. The device primitives, and the models that stand in for them
@@ -186,12 +194,12 @@ lint_off -rule SYNCASYNCNET -file "*/DomesdayDuplicatorFactory.v" -match "*power
 // connection does not.
 lint_off -rule UNUSEDSIGNAL -file "*/DomesdayDuplicatorFactory.v" -match "*test_mode_unused*"
 
-// DomesdayDuplicator.v: bits 2 and 6-9 of fx3_control are unused.
+// DomesdayDuplicator.v: a bit of fx3_control is unused.
 //
-// These are the FX3 CTL lines the board wires up but the design does not use —
-// CTL_02 (collectData) and CTL_06 to CTL_09 (configuration bits 1 to 4). The
-// source names each one as unused in the signal map. They stay in the bus
-// because the pin assignments are fixed by the PCB.
+// CTL_09, the FX3 line the board wires up and the design holds in reserve - the
+// signal map names it. It stays in the bus because the pin assignments are fixed
+// by the PCB. CTL_02 (collectData) used to be unused as well and is now read by
+// the SDRAM capture buffer; CTL_06 and CTL_08 became SPI lines earlier.
 lint_off -rule UNUSEDSIGNAL -file "*/DomesdayDuplicator.v" -match "*fx3_control*"
 
 // DomesdayDuplicator.v: bits 2 and 1 of GPIO_2_IN are unused.
