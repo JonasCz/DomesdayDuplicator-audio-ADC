@@ -174,6 +174,14 @@ StatisticsPanel::StatisticsPanel(CaptureController* controller, QWidget* parent)
          "clipped samples since the run started, in its 24-bit units."));
   audio_files_ = add_row(tr("Audio files"), kAudioFilesLabelName, true);
 
+  // The test facility, whose row reads a dash in every ordinary run and a
+  // warning in any other.
+  usb_stall_ = add_row(tr("USB stall test"), kUsbStallLabelName, true);
+  usb_stall_->setToolTip(
+      tr("Whether the host is stopping its reads from the device on purpose, "
+         "to test the device's buffering. Only ever on when "
+         "--inject-usb-stall or DDD_INJECT_USB_STALL asked for it."));
+
   layout->addLayout(form);
   layout->addStretch();
 
@@ -216,15 +224,23 @@ uint32_t StatisticsPanel::SampleRateHz() const {
                                 : capture::kSampleRateHz;
 }
 
+capture::UsbStallPlan StatisticsPanel::StallInjectionPlan() const {
+  return controller_ != nullptr ? controller_->settings().usb_stall_injection
+                                : capture::UsbStallPlan{};
+}
+
 capture::AudioSource StatisticsPanel::AudioSource() const {
   return controller_ != nullptr ? controller_->settings().audio_source
                                 : capture::AudioSource::kNone;
 }
 
 void StatisticsPanel::OnStatsUpdated(const ddd::capture::CaptureStats& stats) {
-  Apply(PresentStatistics(stats, declared_gain_, link_, destination_space_,
-                          EstimatedBytesPerSecond(), SampleRateHz(),
-                          AudioSource()));
+  StatisticsView view = PresentStatistics(
+      stats, declared_gain_, link_, destination_space_,
+      EstimatedBytesPerSecond(), SampleRateHz(), AudioSource());
+  view.usb_stall_injection =
+      DescribeUsbStallInjection(StallInjectionPlan(), &stats);
+  Apply(view);
 }
 
 void StatisticsPanel::OnMonitoringChanged(bool monitoring) {
@@ -255,8 +271,12 @@ void StatisticsPanel::ShowIdle() {
   // sits full and any figure would be a lie. The hold is cleared with it, or
   // the last run's worst moment would linger over the next one.
   back_pressure_hold_.Reset();
-  Apply(PresentIdleStatistics(declared_gain_, link_, destination_space_,
-                              EstimatedBytesPerSecond(), AudioSource()));
+  StatisticsView view =
+      PresentIdleStatistics(declared_gain_, link_, destination_space_,
+                            EstimatedBytesPerSecond(), AudioSource());
+  view.usb_stall_injection =
+      DescribeUsbStallInjection(StallInjectionPlan(), nullptr);
+  Apply(view);
 }
 
 void StatisticsPanel::RefreshFreeSpace() {
@@ -293,6 +313,7 @@ void StatisticsPanel::Apply(const StatisticsView& view) {
   integrated_audio_->setText(view.integrated_audio);
   external_audio_->setText(view.external_audio);
   audio_files_->setText(view.audio_files);
+  usb_stall_->setText(view.usb_stall_injection);
 
   buffer_fill_->setValue(view.buffer_percent);
   buffer_fill_->setFormat(view.buffer);

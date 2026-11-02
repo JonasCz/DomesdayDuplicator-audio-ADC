@@ -100,6 +100,12 @@ struct CaptureStats {
   // run's, for the reason peak_slots_in_use is.
   SdramSnapshot sdram;
 
+  // The source is stalling the host's reads on purpose, and how many times it
+  // has — the test facility in usb_stall_injection.h. Carried here so that no
+  // display can show a run made with it as an ordinary one.
+  bool usb_stall_injection = false;
+  uint64_t injected_usb_stalls = 0;
+
   // Test mode only, and nothing until a capture has run in it
   bool test_pattern_checked = false;
   bool test_pattern_passed = true;

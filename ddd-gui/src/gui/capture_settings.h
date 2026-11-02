@@ -23,6 +23,7 @@
 #include "free_space.h"
 #include "front_end_gain.h"
 #include "usb_device.h"
+#include "usb_stall_injection.h"
 
 namespace ddd::gui {
 
@@ -168,6 +169,16 @@ struct CaptureSettings {
   // hole in it is better than no capture has decided it for their setup.
   bool continue_after_dropped_samples = false;
 
+  // Stall the host's reads on purpose, on a schedule — a test facility for
+  // the device's buffering, off unless --inject-usb-stall or the
+  // DDD_INJECT_USB_STALL environment variable turns it on. See
+  // usb_stall_injection.h.
+  //
+  // Never persisted, and there is no control for it in any window: a capture
+  // made with it has had samples put at risk on purpose, and a setting that
+  // survived a restart would be a way to make one without knowing.
+  capture::UsbStallPlan usb_stall_injection;
+
   static constexpr int kDefaultLowSpaceWarningMinutes = 10;
   static constexpr int kMaximumDurationLimitMinutes = 24 * 60;
   static constexpr int kMaximumDurationLimitSeconds =
@@ -190,7 +201,8 @@ struct CaptureSettings {
            low_space_warning_minutes == other.low_space_warning_minutes &&
            audio_source == other.audio_source &&
            continue_after_dropped_samples ==
-               other.continue_after_dropped_samples;
+               other.continue_after_dropped_samples &&
+           usb_stall_injection == other.usb_stall_injection;
   }
   bool operator!=(const CaptureSettings& other) const {
     return !(*this == other);

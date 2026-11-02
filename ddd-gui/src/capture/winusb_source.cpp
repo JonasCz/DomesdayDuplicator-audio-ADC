@@ -20,6 +20,7 @@
 #include <utility>
 
 #include "logger.h"
+#include "usb_stall_injection.h"
 #include "wire_protocol.h"
 
 namespace ddd::capture {
@@ -193,6 +194,19 @@ bool WinUsbSource::AwaitTransfer(Transfer& entry, DiskBufferRing& ring,
 }
 
 TransferResult WinUsbSource::Run(DiskBufferRing& ring, SourceControl& control) {
+  // The stall injection test facility is libusb's alone. This loop's underflow
+  // probe fails a capture the moment a request completes before its successor
+  // is queued, which is exactly what an injected stall arranges, so injecting
+  // one here would test the probe rather than the device. Said rather than
+  // silently ignored, so nobody believes a run here was stressed.
+  if (options_.stall_injection.enabled() && logger_ != nullptr) {
+    logger_->Warning(
+        "USB stall injection was asked for (" +
+        DescribeUsbStallPlan(options_.stall_injection) +
+        ") but is not available with the WinUSB backend; nothing will be "
+        "injected");
+  }
+
   ring_ = &ring;
   discarded_transfers_ = 0;
   capture_complete_ = false;

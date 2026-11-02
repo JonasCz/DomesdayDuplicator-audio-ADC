@@ -397,6 +397,7 @@ class CaptureController : public QObject {
   // The same, for a framed stream's losses, so that the sidecar counts the
   // ones inside this file.
   uint64_t sync_losses_at_start_ = 0;
+  uint64_t injected_stalls_at_start_ = 0;
 
   // The running capture's audio: which converters it asked for, where their
   // files are, and whether the gateware has been found to send none.

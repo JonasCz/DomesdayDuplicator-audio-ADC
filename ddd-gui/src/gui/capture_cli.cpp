@@ -15,6 +15,7 @@
 #include <QFileInfo>
 #include <QLatin1String>
 #include <QStringList>
+#include <QtGlobal>
 
 namespace ddd::gui {
 namespace {
@@ -31,6 +32,7 @@ constexpr const char* kDurationLimitName = "duration-limit";
 constexpr const char* kOutputFormatName = "output-format";
 constexpr const char* kAudioSourceName = "audio-source";
 constexpr const char* kOnDroppedSamplesName = "on-dropped-samples";
+constexpr const char* kInjectUsbStallName = "inject-usb-stall";
 
 // What a framed stream does when it loses samples: stop, as every stream does
 // by default, or carry on past the hole.
@@ -158,6 +160,14 @@ CaptureCliOptionSet AddCaptureCliOptions(QCommandLineParser& parser) {
                          "hole, counting it.")
               .arg(QLatin1String(kStopWord), QLatin1String(kContinueWord)),
           QStringLiteral("action")),
+      QCommandLineOption(
+          QLatin1String(kInjectUsbStallName),
+          QStringLiteral("TEST ONLY: stop reading from the device on purpose "
+                         "for <ms>, every <period> seconds if given, the "
+                         "first after <delay> seconds (5 by default), to test "
+                         "the device's buffering. Also read from %1.")
+              .arg(QLatin1String(capture::kUsbStallEnvironmentVariable)),
+          QStringLiteral("ms[@period][+delay]")),
   };
 
   parser.addOption(set.start_capture);
@@ -170,12 +180,14 @@ CaptureCliOptionSet AddCaptureCliOptions(QCommandLineParser& parser) {
   parser.addOption(set.output_format);
   parser.addOption(set.audio_source);
   parser.addOption(set.on_dropped_samples);
+  parser.addOption(set.inject_usb_stall);
 
   return set;
 }
 
-CaptureCliParseResult ParseCaptureCliOptions(const QCommandLineParser& parser,
-                                             const CaptureCliOptionSet& set) {
+CaptureCliParseResult ParseCaptureCliOptions(
+    const QCommandLineParser& parser, const CaptureCliOptionSet& set,
+    const std::optional<QString>& environment) {
   CaptureCliParseResult result;
   CaptureCliOptions& options = result.options;
 
@@ -327,6 +339,39 @@ CaptureCliParseResult ParseCaptureCliOptions(const QCommandLineParser& parser,
     return result;
   }
 
+  // The stall facility: the command line's, or the environment's when the
+  // command line says nothing. Refused rather than ignored when it cannot be
+  // read — a bench run that silently went ahead without the stalls it was
+  // set up to make would report a pass it never earned.
+  const bool named = parser.isSet(set.inject_usb_stall);
+  if (named && options.stop_capture) {
+    result.error = QStringLiteral(
+        "--inject-usb-stall belongs to the run that captures, so it cannot "
+        "be given with --stop-capture.");
+    return result;
+  }
+
+  const QString environment_text =
+      environment.has_value()
+          ? *environment
+          : qEnvironmentVariable(capture::kUsbStallEnvironmentVariable);
+  const QString stall_text = named
+                                 ? parser.value(set.inject_usb_stall).trimmed()
+                                 : environment_text.trimmed();
+  if (!options.stop_capture && !stall_text.isEmpty()) {
+    const capture::UsbStallPlanParse stall =
+        capture::ParseUsbStallPlan(stall_text.toStdString());
+    if (!stall.plan.has_value()) {
+      result.error =
+          QStringLiteral("Unknown %1 '%2'. %3")
+              .arg(named ? QStringLiteral("--inject-usb-stall")
+                         : QLatin1String(capture::kUsbStallEnvironmentVariable),
+                   stall_text, QString::fromStdString(stall.error));
+      return result;
+    }
+    options.usb_stall_injection = stall.plan;
+  }
+
   return result;
 }
 
@@ -353,6 +398,9 @@ void ApplyCliOverrides(CaptureSettings& settings,
   if (options.continue_after_dropped_samples.has_value()) {
     settings.continue_after_dropped_samples =
         *options.continue_after_dropped_samples;
+  }
+  if (options.usb_stall_injection.has_value()) {
+    settings.usb_stall_injection = *options.usb_stall_injection;
   }
 }
 

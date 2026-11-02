@@ -41,6 +41,7 @@
 #include "sample_format.h"
 #include "synthetic_source.h"
 #include "test_data_analysis.h"
+#include "usb_stall_injection.h"
 
 namespace ddd::gui {
 namespace {
@@ -1585,6 +1586,50 @@ TEST_F(AudioCaptureTest, ALossBeforeTheFileOpenedIsNotAHoleInIt) {
   EXPECT_NE(document.find("\"sync_losses\": 0"), std::string::npos) << document;
   EXPECT_NE(document.find("\"sequence_check\": \"running\""),
             std::string::npos);
+}
+
+// --- The USB stall test facility
+// ----------------------------------------------
+
+TEST_F(CaptureToDiskTest, AStallPlanReachesTheSourceAndTheSidecar) {
+  CaptureSettings settings = controller_->settings();
+  settings.usb_stall_injection =
+      capture::ParseUsbStallPlan("100@2").plan.value_or(
+          capture::UsbStallPlan{});
+  controller_->ApplySessionSettings(settings);
+
+  controller_->StartCapture();
+  ASSERT_TRUE(controller_->capturing());
+  EXPECT_EQ(device_->opened_options().stall_injection,
+            settings.usb_stall_injection);
+  EXPECT_TRUE(LogContains("TEST: USB stall injection is on"));
+
+  controller_->StopCapture();
+  ASSERT_TRUE(PumpUntil([&] { return !controller_->capturing(); }));
+  ASSERT_TRUE(PumpUntil([&] { return MetadataFiles().size() == 1U; }));
+
+  // The synthetic source injects nothing, and the sidecar says it was asked
+  // for and not carried out rather than recording it as if it had been.
+  const std::string document = ReadWholeFile(MetadataFiles().front());
+  EXPECT_NE(document.find("TEST CAPTURE"), std::string::npos) << document;
+  EXPECT_NE(document.find("cannot inject stalls"), std::string::npos);
+  EXPECT_NE(document.find("\"injected_usb_stalls\": 0"), std::string::npos);
+
+  controller_->StopMonitoring();
+  ASSERT_TRUE(PumpUntil([&] { return !controller_->monitoring(); }));
+}
+
+TEST_F(CaptureToDiskTest, AnOrdinaryCaptureAsksTheSourceForNoStalls) {
+  controller_->StartCapture();
+  ASSERT_TRUE(controller_->capturing());
+  EXPECT_FALSE(device_->opened_options().stall_injection.enabled());
+  controller_->StopCapture();
+  ASSERT_TRUE(PumpUntil([&] { return !controller_->capturing(); }));
+  ASSERT_TRUE(PumpUntil([&] { return MetadataFiles().size() == 1U; }));
+  EXPECT_EQ(ReadWholeFile(MetadataFiles().front()).find("usb_stall"),
+            std::string::npos);
+  controller_->StopMonitoring();
+  ASSERT_TRUE(PumpUntil([&] { return !controller_->monitoring(); }));
 }
 
 }  // namespace

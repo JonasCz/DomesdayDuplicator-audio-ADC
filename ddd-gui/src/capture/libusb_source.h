@@ -19,12 +19,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "monitor_tap.h"
 #include "sample_source.h"
 #include "usb_device.h"
+#include "usb_stall_injection.h"
 
 namespace ddd::capture {
 
@@ -80,6 +82,11 @@ class LibUsbSource : public ISampleSource {
   void Finish() override;
 
   FpgaTelemetry DeviceTelemetry() const override { return telemetry_.Read(); }
+
+  bool InjectsStalls() const override {
+    return options_.stall_injection.enabled();
+  }
+  uint64_t InjectedStalls() const override { return injected_stalls_.load(); }
 
   // How often the gateware's capture buffer is read, in milliseconds.
   //
@@ -137,6 +144,11 @@ class LibUsbSource : public ISampleSource {
 
   bool SubmitTransfer(Transfer& entry);
 
+  // The injected stall's turn in the event loop: end it on a stop, and
+  // resubmit what was held back once the hold is over. See
+  // usb_stall_injection.h.
+  void ServiceStall(SourceControl& control);
+
   libusb_context* context_ = nullptr;
 
   // Kept, never read. See the constructor.
@@ -185,6 +197,14 @@ class LibUsbSource : public ISampleSource {
   int telemetry_failures_ = 0;
 
   TelemetryPublisher telemetry_;
+
+  // The test facility's state, present only when a stall plan was given.
+  // Transfers that completed while a stall was due wait in `held_back_`, in the
+  // order they completed — which is the order they were submitted in, and so
+  // the order they must go back in for the ring to be filled in sequence.
+  std::optional<UsbStallScheduler> stall_;
+  std::vector<Transfer*> held_back_;
+  std::atomic<uint64_t> injected_stalls_{0};
 };
 
 }  // namespace ddd::capture

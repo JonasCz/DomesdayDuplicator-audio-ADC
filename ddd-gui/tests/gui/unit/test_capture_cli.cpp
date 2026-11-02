@@ -14,6 +14,7 @@
 #include <QCommandLineParser>
 #include <QString>
 #include <QStringList>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -23,6 +24,7 @@
 #include "capture_cli.h"
 #include "capture_format.h"
 #include "capture_settings.h"
+#include "usb_stall_injection.h"
 
 namespace ddd::gui {
 namespace {
@@ -40,7 +42,10 @@ struct Parsed {
   bool ok() const { return accepted && error.isEmpty(); }
 };
 
-Parsed Parse(const QStringList& arguments) {
+// `environment` stands in for DDD_INJECT_USB_STALL, empty by default so that
+// a variable left set on the machine running the tests cannot change them.
+Parsed Parse(const QStringList& arguments,
+             const QString& environment = QString()) {
   QCommandLineParser parser;
   const CaptureCliOptionSet set = AddCaptureCliOptions(parser);
 
@@ -55,7 +60,8 @@ Parsed Parse(const QStringList& arguments) {
     return parsed;
   }
 
-  const CaptureCliParseResult result = ParseCaptureCliOptions(parser, set);
+  const CaptureCliParseResult result =
+      ParseCaptureCliOptions(parser, set, environment);
   parsed.options = result.options;
   parsed.error = result.error;
   return parsed;
@@ -301,6 +307,86 @@ TEST(CaptureCliTest, TheAudioOptionsAreNotForStopCapture) {
              QStringLiteral("both")});
   EXPECT_TRUE(parsed.accepted);
   EXPECT_FALSE(parsed.error.isEmpty());
+}
+
+// --- The USB stall test facility
+// ----------------------------------------------
+
+TEST(CaptureCliTest, NoStallIsInjectedUnlessAskedFor) {
+  const Parsed parsed = Parse({QStringLiteral("--start-capture")});
+  ASSERT_TRUE(parsed.ok()) << parsed.error.toStdString();
+  EXPECT_FALSE(parsed.options.usb_stall_injection.has_value());
+}
+
+TEST(CaptureCliTest, AStallPlanIsReadFromTheCommandLine) {
+  const Parsed parsed =
+      Parse({QStringLiteral("--inject-usb-stall"), QStringLiteral("300@10+2")});
+  ASSERT_TRUE(parsed.ok()) << parsed.error.toStdString();
+  ASSERT_TRUE(parsed.options.usb_stall_injection.has_value());
+  const capture::UsbStallPlan plan =
+      parsed.options.usb_stall_injection.value_or(capture::UsbStallPlan{});
+  EXPECT_EQ(plan.stall, std::chrono::milliseconds(300));
+  EXPECT_EQ(plan.period, std::chrono::milliseconds(10'000));
+  EXPECT_EQ(plan.initial_delay, std::chrono::milliseconds(2'000));
+
+  // Not an attribute of the capture: it does not stop a window opening with
+  // the saved settings, and it is applied on a path of its own.
+  EXPECT_FALSE(parsed.options.HasAttributeOverrides());
+}
+
+TEST(CaptureCliTest, TheEnvironmentAsksWhenTheCommandLineDoesNot) {
+  const Parsed from_environment = Parse({}, QStringLiteral("150@5"));
+  ASSERT_TRUE(from_environment.ok()) << from_environment.error.toStdString();
+  ASSERT_TRUE(from_environment.options.usb_stall_injection.has_value());
+  EXPECT_EQ(from_environment.options.usb_stall_injection
+                .value_or(capture::UsbStallPlan{})
+                .stall,
+            std::chrono::milliseconds(150));
+
+  // And the command line wins where both say something.
+  const Parsed both =
+      Parse({QStringLiteral("--inject-usb-stall"), QStringLiteral("20")},
+            QStringLiteral("150@5"));
+  ASSERT_TRUE(both.ok()) << both.error.toStdString();
+  EXPECT_EQ(
+      both.options.usb_stall_injection.value_or(capture::UsbStallPlan{}).stall,
+      std::chrono::milliseconds(20));
+}
+
+TEST(CaptureCliTest, AStallPlanThatCannotBeReadIsRefusedWherePutIt) {
+  const Parsed option =
+      Parse({QStringLiteral("--inject-usb-stall"), QStringLiteral("lots")});
+  EXPECT_TRUE(option.accepted);
+  EXPECT_TRUE(option.error.contains(QStringLiteral("--inject-usb-stall")))
+      << option.error.toStdString();
+
+  const Parsed environment = Parse({}, QStringLiteral("lots"));
+  EXPECT_TRUE(
+      environment.error.contains(QStringLiteral("DDD_INJECT_USB_STALL")))
+      << environment.error.toStdString();
+}
+
+TEST(CaptureCliTest, ALeftoverEnvironmentVariableDoesNotBlockStopCapture) {
+  const Parsed parsed =
+      Parse({QStringLiteral("--stop-capture")}, QStringLiteral("300@10"));
+  EXPECT_TRUE(parsed.ok()) << parsed.error.toStdString();
+  EXPECT_FALSE(parsed.options.usb_stall_injection.has_value());
+
+  const Parsed named =
+      Parse({QStringLiteral("--stop-capture"),
+             QStringLiteral("--inject-usb-stall"), QStringLiteral("300")});
+  EXPECT_FALSE(named.error.isEmpty());
+}
+
+TEST(CaptureCliTest, TheStallPlanReachesTheUsbSourceForThisRunOnly) {
+  CaptureSettings settings;
+  CaptureCliOptions options;
+  options.usb_stall_injection = capture::ParseUsbStallPlan("300@10").plan;
+  ApplyCliOverrides(settings, options);
+
+  EXPECT_TRUE(settings.usb_stall_injection.enabled());
+  EXPECT_EQ(settings.UsbOptions().stall_injection,
+            settings.usb_stall_injection);
 }
 
 TEST(CaptureCliTest, AnEmptyCaptureNameIsRefused) {

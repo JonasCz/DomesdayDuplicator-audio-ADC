@@ -287,6 +287,13 @@ std::string BuildCaptureMetadataYaml(const CaptureMetadata& metadata) {
   yaml.Comment("blank, so everything written here was actually known.");
   yaml.BlankLine();
 
+  if (!metadata.usb_stall_injection.empty()) {
+    yaml.Comment("TEST CAPTURE: the host stopped reading from the device on");
+    yaml.Comment("purpose while this was being made. See");
+    yaml.Comment("capture.usb_stall_injection.");
+    yaml.BlankLine();
+  }
+
   yaml.Integer("schema_version", kMetadataSchemaVersion);
   yaml.String("application_version", metadata.application_version);
   yaml.BlankLine();
@@ -309,6 +316,10 @@ std::string BuildCaptureMetadataYaml(const CaptureMetadata& metadata) {
   yaml.StringIfPresent("stream_format", metadata.stream_format);
   if (metadata.outcome.sync_losses_counted) {
     yaml.Unsigned("sync_losses", metadata.outcome.sync_losses);
+  }
+  if (!metadata.usb_stall_injection.empty()) {
+    yaml.String("usb_stall_injection", metadata.usb_stall_injection);
+    yaml.Unsigned("injected_usb_stalls", metadata.outcome.injected_usb_stalls);
   }
   yaml.Unsigned("device_overflow_events",
                 metadata.outcome.device_overflow_events);

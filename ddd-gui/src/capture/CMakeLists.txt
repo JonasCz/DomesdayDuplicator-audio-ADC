@@ -91,6 +91,7 @@ add_library(ddd_capture STATIC
     usb_blaster_cable.cpp
     usb_device.cpp
     usb_device_info.cpp
+    usb_stall_injection.cpp
     version.cpp
     yaml_writer.cpp
 )

@@ -73,6 +73,8 @@ class StatisticsPanel : public QWidget {
       "statistics_external_audio";
   static constexpr const char* kAudioFilesLabelName = "statistics_audio_files";
   static constexpr const char* kSdramBarName = "statistics_sdram";
+  static constexpr const char* kUsbStallLabelName =
+      "statistics_usb_stall_injection";
 
   // See CapturePanel::kFreeSpaceIntervalMilliseconds — the same reasoning, and
   // deliberately the same figure, so the two panels never disagree about how
@@ -102,6 +104,10 @@ class StatisticsPanel : public QWidget {
   // Which converters a capture records, or none without a controller.
   capture::AudioSource AudioSource() const;
 
+  // The USB stall test facility's plan for this run, off without a
+  // controller.
+  capture::UsbStallPlan StallInjectionPlan() const;
+
   QLabel* throughput_ = nullptr;
   QLabel* sequence_ = nullptr;
   QProgressBar* buffer_fill_ = nullptr;
@@ -124,6 +130,7 @@ class StatisticsPanel : public QWidget {
   QLabel* external_audio_ = nullptr;
   QLabel* audio_files_ = nullptr;
   QProgressBar* sdram_ = nullptr;
+  QLabel* usb_stall_ = nullptr;
 
   CaptureController* controller_ = nullptr;
 

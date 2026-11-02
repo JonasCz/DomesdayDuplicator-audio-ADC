@@ -251,6 +251,7 @@ capture::UsbSourceOptions CaptureSettings::UsbOptions() const {
   capture::UsbSourceOptions options;
   options.small_transfers = small_transfers;
   options.transfer_queue_bytes = transfer_queue_bytes;
+  options.stall_injection = usb_stall_injection;
   return options;
 }
 

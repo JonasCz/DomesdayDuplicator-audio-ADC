@@ -284,6 +284,29 @@ QString DetailSdram(const capture::CaptureStats& stats,
 
 }  // namespace
 
+QString DescribeUsbStallInjection(const capture::UsbStallPlan& plan,
+                                  const capture::CaptureStats* stats) {
+  if (!plan.enabled()) {
+    return None();
+  }
+
+  const QString described =
+      QString::fromStdString(capture::DescribeUsbStallPlan(plan));
+
+  if (stats == nullptr) {
+    return Translate("TEST — on for this run: %1").arg(described);
+  }
+  if (!stats->usb_stall_injection) {
+    return Translate(
+               "TEST — asked for (%1), but this USB backend cannot inject "
+               "stalls")
+        .arg(described);
+  }
+  return Translate("TEST — ON: %1; %2 injected so far")
+      .arg(described)
+      .arg(stats->injected_usb_stalls);
+}
+
 QString FormatSdramFill(uint32_t rows, uint32_t sample_rate_hz) {
   return Translate("%1% (%2 MiB, %3 ms)")
       .arg(capture::SdramFillPercent(rows), 0, 'f', 1)
@@ -469,6 +492,7 @@ StatisticsView PresentIdleStatistics(const analysis::FrontEndGain& gain,
   view.stream_format = None();
   view.sync_losses = None();
   view.sdram = None();
+  view.usb_stall_injection = None();
   view.integrated_audio = None();
   view.external_audio = None();
   view.audio_files = DescribeAudioFiles(nullptr, audio_source);

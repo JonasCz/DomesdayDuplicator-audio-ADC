@@ -275,6 +275,9 @@ struct CaptureOutcome {
   bool sync_losses_counted = false;
   uint64_t sync_losses = 0;
 
+  // Stalls injected while this file was open, alongside the plan above.
+  uint64_t injected_usb_stalls = 0;
+
   // Test mode only. `checked` is false for an ordinary capture, and for a test
   // capture that was stopped before a full ramp had gone past.
   bool test_pattern_checked = false;
@@ -372,6 +375,12 @@ struct CaptureMetadata {
   // in StreamFormatName's words. Empty for a capture too short to have been
   // looked at.
   std::string stream_format;
+
+  // The USB stall test facility's plan, in words, when it was on for this
+  // capture — and empty, which leaves it out, for every capture made without
+  // it. A capture made with it had samples put at risk on purpose, and the
+  // document says so before anything else.
+  std::string usb_stall_injection;
 
   // The declared front-end gain, as a sentence, or empty for a gain that was
   // never declared. Empty is the important case: a figure nobody checked would

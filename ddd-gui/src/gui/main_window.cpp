@@ -53,6 +53,7 @@
 #include "statistics_panel.h"
 #include "theme_controller.h"
 #include "usb_device_info.h"
+#include "usb_stall_injection.h"
 #include "version.h"
 #include "waveform_panel.h"
 
@@ -211,18 +212,30 @@ MainWindow::MainWindow(ThemeController* theme_controller,
                     tr("%1 device(s) attached").arg(capturable));
               }
             });
+    // With the USB stall test facility on, every one of these says so: a run
+    // made with it has samples put at risk on purpose, and the status bar is
+    // where somebody glancing at the window looks to see what it is doing.
+    const auto stall_note = [this] {
+      const capture::UsbStallPlan& plan =
+          capture_controller_->settings().usb_stall_injection;
+      return plan.enabled() ? tr(" — TEST: USB stall injection on (%1)")
+                                  .arg(QString::fromStdString(
+                                      capture::DescribeUsbStallPlan(plan)))
+                            : QString();
+    };
     connect(capture_controller_, &CaptureController::MonitoringChanged, this,
-            [this](bool monitoring) {
+            [this, stall_note](bool monitoring) {
               if (monitoring) {
-                statusBar()->showMessage(tr("Monitoring"));
+                statusBar()->showMessage(tr("Monitoring") + stall_note());
               }
             });
     connect(capture_controller_, &CaptureController::CapturingChanged, this,
-            [this](bool capturing, const QString& file_path) {
+            [this, stall_note](bool capturing, const QString& file_path) {
               if (capturing) {
-                statusBar()->showMessage(tr("Capturing to %1").arg(file_path));
+                statusBar()->showMessage(tr("Capturing to %1").arg(file_path) +
+                                         stall_note());
               } else if (capture_controller_->monitoring()) {
-                statusBar()->showMessage(tr("Monitoring"));
+                statusBar()->showMessage(tr("Monitoring") + stall_note());
               }
             });
     connect(capture_controller_, &CaptureController::CaptureFinished, this,

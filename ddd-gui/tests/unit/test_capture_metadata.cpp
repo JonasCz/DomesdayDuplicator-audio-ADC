@@ -180,6 +180,26 @@ TEST_F(CaptureMetadataTest, AudioAskedForAndNotRecordedSaysWhy) {
   EXPECT_FALSE(Contains(document, "integrated_adc"));
 }
 
+TEST_F(CaptureMetadataTest, ACaptureMadeWithInjectedStallsSaysSoFirst) {
+  CaptureMetadata metadata = Ordinary();
+  metadata.usb_stall_injection = "300 ms every 10 s, the first 5 s in";
+  metadata.outcome.injected_usb_stalls = 4;
+
+  const std::string document = BuildCaptureMetadataYaml(metadata);
+  EXPECT_LT(document.find("TEST CAPTURE"), document.find("schema_version"))
+      << document;
+  EXPECT_TRUE(Contains(document,
+                       "\"usb_stall_injection\": \"300 ms every 10 s, the "
+                       "first 5 s in\""));
+  EXPECT_TRUE(Contains(document, "\"injected_usb_stalls\": 4"));
+}
+
+TEST_F(CaptureMetadataTest, AnOrdinaryCaptureSaysNothingAboutStalls) {
+  const std::string document = BuildCaptureMetadataYaml(Ordinary());
+  EXPECT_FALSE(Contains(document, "TEST CAPTURE"));
+  EXPECT_FALSE(Contains(document, "usb_stall"));
+}
+
 TEST_F(CaptureMetadataTest, NoAudioAskedForLeavesTheSectionOut) {
   const std::string document = BuildCaptureMetadataYaml(Ordinary());
   EXPECT_FALSE(Contains(document, "\"requested\""));

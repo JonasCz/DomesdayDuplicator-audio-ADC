@@ -12,10 +12,14 @@
 
 #include "libusb_source.h"
 
+#include <chrono>
 #include <span>
 #include <utility>
+#include <vector>
 
+#include "log_format.h"
 #include "logger.h"
+#include "usb_stall_injection.h"
 #include "wire_protocol.h"
 
 namespace ddd::capture {
@@ -205,15 +209,44 @@ TransferResult LibUsbSource::Run(DiskBufferRing& ring, SourceControl& control) {
   timeout.tv_usec =
       static_cast<decltype(timeout.tv_usec)>(kEventTimeoutMicroseconds);
 
+  // The test facility, when it was asked for, and said loudly: a run with it
+  // on is putting samples at risk on purpose.
+  held_back_.clear();
+  injected_stalls_ = 0;
+  stall_.reset();
+  if (options_.stall_injection.enabled()) {
+    stall_.emplace(options_.stall_injection);
+    stall_->Start(std::chrono::steady_clock::now());
+    if (logger_ != nullptr) {
+      logger_->Warning(
+          "USB STALL INJECTION IS ON: " +
+          DescribeUsbStallPlan(options_.stall_injection) +
+          ". The host will stop reading from the device on purpose; this run "
+          "is a test of the device's buffering, not a recording.");
+    }
+  }
+
   telemetry_in_flight_ = false;
   telemetry_primed_ = false;
   telemetry_failures_ = 0;
   telemetry_due_ = std::chrono::steady_clock::now();
 
-  while (!failed_ && transfers_in_flight_ > 0) {
+  while (!failed_ && (transfers_in_flight_ > 0 || !held_back_.empty())) {
     PollTelemetry();
 
-    libusb_handle_events_timeout_completed(context_, &timeout, nullptr);
+    // Woken in time to end an injected stall on the millisecond, rather than
+    // at the next event-loop timeout — which with nothing in flight is the only
+    // thing that would wake it.
+    timeval wait = timeout;
+    if (stall_.has_value()) {
+      const auto bound = std::chrono::duration_cast<std::chrono::microseconds>(
+          stall_->WaitBound(
+              std::chrono::steady_clock::now(),
+              std::chrono::microseconds(kEventTimeoutMicroseconds)));
+      wait.tv_usec = static_cast<decltype(wait.tv_usec)>(bound.count());
+    }
+
+    libusb_handle_events_timeout_completed(context_, &wait, nullptr);
 
     // An abort has to be noticed here as well as in the callback: if the device
     // has gone quiet, no callback will run again and only this loop is left to
@@ -221,7 +254,15 @@ TransferResult LibUsbSource::Run(DiskBufferRing& ring, SourceControl& control) {
     if (control.AbortRequested() || ring.AbortRequested()) {
       Fail(TransferResult::kForcedAbort, "The capture was stopped by force");
     }
+
+    if (stall_.has_value() && !failed_) {
+      ServiceStall(control);
+    }
   }
+
+  // Held back and never resubmitted: they are not on the wire, so there is
+  // nothing to cancel or reap.
+  held_back_.clear();
 
   // A reading in flight is outstanding in exactly the same way as a bulk
   // transfer, and its buffer is a member of this object, so it has to be
@@ -262,6 +303,62 @@ TransferResult LibUsbSource::Run(DiskBufferRing& ring, SourceControl& control) {
   control_ = nullptr;
 
   return result_;
+}
+
+void LibUsbSource::ServiceStall(SourceControl& control) {
+  if (!stall_.has_value() || held_back_.empty()) {
+    return;
+  }
+
+  // A stop arriving mid-stall ends the run here: nothing is in flight to
+  // complete and notice it, and the transfers held back were never going to
+  // carry a slot to its end anyway.
+  if (control.StopRequested() || capture_complete_) {
+    if (logger_ != nullptr) {
+      logger_->Warning(
+          "The capture was stopped during an injected USB stall; nothing "
+          "held back was resubmitted");
+    }
+    held_back_.clear();
+    capture_complete_ = true;
+    return;
+  }
+
+  const UsbStallScheduler::Event event =
+      stall_->Advance(std::chrono::steady_clock::now(), transfers_in_flight_);
+  if (event != UsbStallScheduler::Event::kHoldEnded) {
+    return;
+  }
+
+  const UsbStallScheduler::Stall& stall = stall_->last();
+  injected_stalls_.fetch_add(1);
+
+  // Once a stall, not once a transfer, and a warning so that it stands out:
+  // every one of these is a moment the samples were put at risk on purpose.
+  if (logger_ != nullptr) {
+    logger_->Warning(
+        "Injected USB stall " + std::to_string(stall.number) + " at " +
+        FormatUtcTimestamp(stall.wall) + ": asked for " +
+        std::to_string(stall.requested.count()) + " ms; the " +
+        std::to_string(held_back_.size()) + " transfers in flight took " +
+        FormatDecimal(
+            std::chrono::duration<double, std::milli>(stall.drain).count(), 2) +
+        " ms to complete, then nothing was queued for " +
+        FormatDecimal(
+            std::chrono::duration<double, std::milli>(stall.zero_queued)
+                .count(),
+            2) +
+        " ms");
+  }
+
+  // Back on the wire in the order they came off it.
+  std::vector<Transfer*> resubmit;
+  resubmit.swap(held_back_);
+  for (Transfer* entry : resubmit) {
+    if (!SubmitTransfer(*entry)) {
+      return;
+    }
+  }
 }
 
 void LibUsbSource::PollTelemetry() {
@@ -443,6 +540,14 @@ void LibUsbSource::OnCompletion(Transfer& entry) {
   // per transfer for an answer that cannot have changed.
   if (entry.index_in_slot == 0 && !ring_->WaitForSlotFree(next_slot)) {
     Fail(TransferResult::kForcedAbort, "The capture was stopped by force");
+    return;
+  }
+
+  // An injected stall is due or under way: held back, aimed where it would
+  // have been, until the run loop resubmits it.
+  if (stall_.has_value() && stall_->HoldBack(std::chrono::steady_clock::now(),
+                                             transfers_in_flight_)) {
+    held_back_.push_back(&entry);
     return;
   }
 

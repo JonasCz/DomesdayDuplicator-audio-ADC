@@ -21,6 +21,7 @@
 #include "disk_buffer_ring.h"
 #include "free_space.h"
 #include "sample_format.h"
+#include "usb_stall_injection.h"
 
 namespace ddd::gui {
 namespace {
@@ -383,6 +384,20 @@ TEST_F(CaptureSettingsTest, AudioFilesAreCountedInTheDiskRate) {
 
   settings.decimation_factor = capture::kTapeDecimationFactor;
   EXPECT_DOUBLE_EQ(settings.EstimatedBytesPerSecond(), (rf + 781'250.0) / 2.0);
+}
+
+TEST_F(CaptureSettingsTest, TheUsbStallTestIsNeverRemembered) {
+  // A capture made with it has had samples put at risk on purpose; a setting
+  // that survived a restart would be a way to make one without knowing.
+  CaptureSettings saved;
+  saved.usb_stall_injection =
+      capture::ParseUsbStallPlan("300@10").plan.value_or(
+          capture::UsbStallPlan{});
+  SaveCaptureSettings(saved);
+  EXPECT_FALSE(LoadCaptureSettings().usb_stall_injection.enabled());
+
+  // While it is set, it is what the USB source is given.
+  EXPECT_EQ(saved.UsbOptions().stall_injection, saved.usb_stall_injection);
 }
 
 TEST_F(CaptureSettingsTest, TheGainIsNotPassedToTheEngine) {

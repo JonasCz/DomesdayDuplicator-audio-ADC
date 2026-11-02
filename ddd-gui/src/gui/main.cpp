@@ -370,7 +370,12 @@ int main(int argc, char* argv[]) {
   // showing what the command line asked for — and applied rather than set,
   // because what a command line names belongs to this run and is not the user's
   // new saved answer.
-  if (capture_cli.options.HasAttributeOverrides()) {
+  //
+  // The USB stall test facility rides the same path, environment variable
+  // included, so a window started from a desktop shortcut can be put through
+  // it too.
+  if (capture_cli.options.HasAttributeOverrides() ||
+      capture_cli.options.usb_stall_injection.has_value()) {
     ddd::gui::CaptureSettings settings = capture_controller.settings();
     ddd::gui::ApplyCliOverrides(settings, capture_cli.options);
     capture_controller.ApplySessionSettings(settings);

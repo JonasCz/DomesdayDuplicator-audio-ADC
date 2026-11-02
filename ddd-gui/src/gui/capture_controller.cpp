@@ -323,6 +323,15 @@ void CaptureController::StartMonitoring() {
   // count of them stands for twice as long.
   options.sample_rate_hz = settings_.SampleRateHz();
 
+  // Said by the application as well as by the source that does it, so that the
+  // window's own log carries it whichever backend is in use.
+  if (settings_.usb_stall_injection.enabled() && logger_ != nullptr) {
+    logger_->Warning(
+        "TEST: USB stall injection is on for this run (" +
+        capture::DescribeUsbStallPlan(settings_.usb_stall_injection) +
+        "). Captures made now have their samples put at risk on purpose.");
+  }
+
   // Enumerating opens devices and does control transfers on them. Doing that to
   // a device that is streaming would put avoidable traffic on the bus for an
   // answer that is already obvious: data is arriving, so it is plainly still
@@ -508,6 +517,7 @@ std::unique_ptr<capture::ISampleSink> CaptureController::OpenCaptureFile() {
   device_overflows_at_start_ = opening.device_overflow_events;
   device_drops_at_start_ = opening.device_dropped_words;
   sync_losses_at_start_ = opening.sync_losses;
+  injected_stalls_at_start_ = opening.injected_usb_stalls;
 
   if (logger_ != nullptr) {
     logger_->Info("Capturing to " + path.string() + " (" + sink->Name() +
@@ -1036,6 +1046,20 @@ void CaptureController::WriteMetadataSidecar(
   // is nonetheless a statement about this file.
   metadata.outcome.sequence_check =
       capture::SequenceStateName(stats.sequence_state);
+
+  // The USB stall test facility, when it was on: the plan, and the stalls
+  // inside this file. A plan the backend could not carry out is said to have
+  // been asked for and not applied, rather than recorded as if it had been.
+  if (settings_.usb_stall_injection.enabled()) {
+    metadata.usb_stall_injection =
+        capture::DescribeUsbStallPlan(settings_.usb_stall_injection) +
+        (stats.usb_stall_injection
+             ? std::string()
+             : std::string(" (asked for; this USB backend cannot inject "
+                           "stalls, so none were)"));
+    metadata.outcome.injected_usb_stalls =
+        Since(stats.injected_usb_stalls, injected_stalls_at_start_);
+  }
 
   // What the stream was, and for a framed one the losses inside this file —
   // differences, for the reason the device's counters are.

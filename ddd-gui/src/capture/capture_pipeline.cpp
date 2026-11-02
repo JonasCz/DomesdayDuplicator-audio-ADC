@@ -848,6 +848,9 @@ void CapturePipeline::PublishStats() {
   stats.last_sync_loss_buffer = last_sync_loss_buffer_;
   stats.audio = audio_metrics_.Snapshot();
   stats.sdram = sdram_monitor_.Snapshot();
+  stats.usb_stall_injection = source_ != nullptr && source_->InjectsStalls();
+  stats.injected_usb_stalls =
+      source_ != nullptr ? source_->InjectedStalls() : 0;
   stats.audio_written =
       (sink_ != nullptr) ? sink_->AudioWritten() : AudioWriteSummary{};
   stats.test_pattern_checked = test_pattern_checked_;

@@ -21,6 +21,7 @@
 #include "sample_format.h"
 #include "sdram_status.h"
 #include "usb_device_info.h"
+#include "usb_stall_injection.h"
 
 namespace ddd::gui {
 
@@ -109,6 +110,11 @@ struct StatisticsView {
   QString sdram;
   int sdram_percent = 0;
   QString sdram_detail;
+
+  // The USB stall test facility, when it is on: the plan and how many stalls
+  // have been injected. Blank in every ordinary run. See
+  // DescribeUsbStallInjection, which fills it.
+  QString usb_stall_injection;
 };
 
 // The view for a set of statistics.
@@ -139,6 +145,15 @@ StatisticsView PresentIdleStatistics(
     const capture::FreeSpace& space = {},
     double bytes_per_second = capture::kEstimatedCaptureBytesPerSecond,
     capture::AudioSource audio_source = capture::AudioSource::kNone);
+
+// The USB stall test facility in words: blank when it is off, and loud when
+// it is on, because a run made with it must not read as an ordinary one.
+// `stats` is null before anything has run. Separate from PresentStatistics
+// because the plan is a setting of the run rather than anything the pipeline
+// reports, and only whether it is being carried out comes from the
+// statistics.
+QString DescribeUsbStallInjection(const capture::UsbStallPlan& plan,
+                                  const capture::CaptureStats* stats);
 
 // An SDRAM fill as a readout: its share of the buffer, its size and the length
 // of stream it holds at `sample_rate_hz`.

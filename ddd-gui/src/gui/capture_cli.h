@@ -18,6 +18,7 @@
 #include "audio_sink.h"
 #include "capture_format.h"
 #include "capture_settings.h"
+#include "usb_stall_injection.h"
 
 class QCommandLineParser;
 
@@ -69,6 +70,7 @@ struct CaptureCliOptionSet {
   QCommandLineOption output_format;
   QCommandLineOption audio_source;
   QCommandLineOption on_dropped_samples;
+  QCommandLineOption inject_usb_stall;
 };
 
 // Add them to a parser, and hand back the set to read the values out of.
@@ -102,6 +104,12 @@ struct CaptureCliOptions {
   std::optional<capture::AudioSource> audio_source;
   std::optional<bool> continue_after_dropped_samples;
 
+  // The USB stall test facility, from --inject-usb-stall or, failing that,
+  // the DDD_INJECT_USB_STALL environment variable. Not an attribute of the
+  // capture for HasAttributeOverrides(): an environment variable left set
+  // must not stop --stop-capture working.
+  std::optional<capture::UsbStallPlan> usb_stall_injection;
+
   // Whether anything about the capture itself was named. An attribute given
   // with no start command is not an error: it populates the window, which is
   // the "set this up for me and I will press the button" case.
@@ -125,8 +133,13 @@ struct CaptureCliParseResult {
 // --start-capture is a request to do nothing invisibly, and --stop-capture
 // beside anything else is two instructions for one process, where the second
 // one would be silently dropped.
-CaptureCliParseResult ParseCaptureCliOptions(const QCommandLineParser& parser,
-                                             const CaptureCliOptionSet& set);
+//
+// The stall facility's environment variable is read here too, when the
+// command line does not name a plan; `environment` stands in for it so the
+// tests do not have to set one.
+CaptureCliParseResult ParseCaptureCliOptions(
+    const QCommandLineParser& parser, const CaptureCliOptionSet& set,
+    const std::optional<QString>& environment = std::nullopt);
 
 // Lay whatever was named over the settings a capture is about to run with.
 //

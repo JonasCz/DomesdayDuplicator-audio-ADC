@@ -121,6 +121,16 @@ class ISampleSource {
   // is executing on another. Implementations publish through a wait-free tap
   // (monitor_tap.h) rather than locking.
   virtual FpgaTelemetry DeviceTelemetry() const { return {}; }
+
+  // Whether this source is deliberately stalling the host's reads, and how
+  // many stalls it has injected so far — the test facility in
+  // usb_stall_injection.h. Not a source a capture is ever made with by
+  // accident, so the statistics carry both and the display says so.
+  //
+  // Thread-safety: as DeviceTelemetry, read from the processing thread while
+  // Run() executes on another.
+  virtual bool InjectsStalls() const { return false; }
+  virtual uint64_t InjectedStalls() const { return 0; }
 };
 
 }  // namespace ddd::capture

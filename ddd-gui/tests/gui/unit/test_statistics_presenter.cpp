@@ -760,6 +760,37 @@ TEST(StatisticsPresenterTest, GatewareWithNoSdramIsNotReportedRatherThanEmpty) {
             None());
 }
 
+// --- The USB stall test facility
+// ----------------------------------------------
+
+TEST(StatisticsPresenterTest, AnOrdinaryRunSaysNothingAboutStalls) {
+  capture::CaptureStats stats = RunningStats();
+  EXPECT_EQ(DescribeUsbStallInjection(capture::UsbStallPlan{}, &stats), None());
+  EXPECT_EQ(DescribeUsbStallInjection(capture::UsbStallPlan{}, nullptr),
+            None());
+}
+
+TEST(StatisticsPresenterTest, ARunWithStallsInjectedSaysSoLoudly) {
+  const capture::UsbStallPlan plan =
+      capture::ParseUsbStallPlan("300@10").plan.value_or(
+          capture::UsbStallPlan{});
+
+  EXPECT_TRUE(DescribeUsbStallInjection(plan, nullptr)
+                  .startsWith(QStringLiteral("TEST")));
+
+  capture::CaptureStats stats = RunningStats();
+  stats.usb_stall_injection = true;
+  stats.injected_usb_stalls = 3;
+  EXPECT_EQ(DescribeUsbStallInjection(plan, &stats),
+            QStringLiteral("TEST — ON: 300 ms every 10 s, the first 5 s in; 3 "
+                           "injected so far"));
+
+  // Asked for of a backend that cannot: said, rather than shown as on.
+  stats.usb_stall_injection = false;
+  EXPECT_TRUE(DescribeUsbStallInjection(plan, &stats)
+                  .contains(QStringLiteral("cannot inject")));
+}
+
 TEST(StatisticsPresenterTest, NothingAboutTheStreamIsShownBeforeItIsKnown) {
   const StatisticsView view = PresentStatistics(RunningStats(), Undeclared(),
                                                 capture::DeviceSpeed::kSuper);

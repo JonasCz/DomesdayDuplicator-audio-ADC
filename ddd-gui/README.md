@@ -128,6 +128,20 @@ recorded. With the original gateware none of this changes anything: the capture 
 always has, and audio that was asked for is reported as not available rather than failing
 anything. `--audio-source` and `--on-dropped-samples` do the same from a command line.
 
+**The device's SDRAM buffer, and a way to test it**. Gateware with an SDRAM capture buffer
+reports its fill in every frame's reserved slots, and the Statistics panel shows it as
+*Device SDRAM*: now and the run's peak, each as a percentage, MiB and the milliseconds of
+stream it holds, with the overflow and bypass flags; the log carries the peak at the end of
+every run. To make the host stall on purpose and watch that buffer absorb it, a bench run
+can be given `--inject-usb-stall <ms>[@<period-seconds>][+<delay-seconds>]`, or the same
+text in `DDD_INJECT_USB_STALL` for a windowed run: when a stall is due the libusb backend
+stops resubmitting transfers, waits until none are in flight, holds nothing queued for
+exactly the time asked and then resumes, logging the requested and measured intervals. It
+is off unless asked for, never saved, refused above four seconds (the capture's own stall
+watchdog would end the run), not available on WinUSB, and announced in the log, the status
+bar, the Statistics panel and the capture's sidecar, so that a capture made with it cannot
+be mistaken for an ordinary one.
+
 **Test-mode integrity checking**. With the gateware's test pattern running, every sample is
 the previous one plus one, and any break is a sample the capture path lost. Test captures
 are always named `TestData_` — forced, not defaulted, because a file called "Blade Runner

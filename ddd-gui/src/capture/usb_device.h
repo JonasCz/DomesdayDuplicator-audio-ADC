@@ -21,6 +21,7 @@
 #include "sample_source.h"
 #include "transfer_result.h"
 #include "usb_device_info.h"
+#include "usb_stall_injection.h"
 
 namespace ddd::capture {
 
@@ -54,6 +55,10 @@ struct UsbSourceOptions {
   // transfers hold whatever was mid-flight. Four slots is what the old engine
   // used and what years of field captures were made with.
   uint64_t discard_slots = 4;
+
+  // Stop reading on purpose, on a schedule — a test facility, off by default.
+  // See usb_stall_injection.h.
+  UsbStallPlan stall_injection;
 };
 
 // What the transfers are going to look like, worked out before any of them are
