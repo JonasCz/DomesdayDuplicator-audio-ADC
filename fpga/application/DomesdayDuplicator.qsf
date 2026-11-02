@@ -203,6 +203,62 @@ set_location_assignment PIN_J14 -to GPIO1[33]
 #set_location_assignment PIN_R9 -to GPIO1_IN[1]
 
 #============================================================
+# ADC, the on-board ADC128S022
+#============================================================
+# The audio interface's 12-bit converter. Names and locations are the
+# DE0-Nano's own - Terasic's reference .qsf and the user manual's Table 3-9.
+# ADC_SADDR is the converter's DIN and ADC_SDAT its DOUT.
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to ADC_CS_N
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to ADC_SADDR
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to ADC_SCLK
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to ADC_SDAT
+set_location_assignment PIN_A10 -to ADC_CS_N
+set_location_assignment PIN_B10 -to ADC_SADDR
+set_location_assignment PIN_B14 -to ADC_SCLK
+set_location_assignment PIN_A9 -to ADC_SDAT
+
+#============================================================
+# GPIO_2, the 2x13 header JP3
+#============================================================
+# Carries the PCM1802: SCKI on GPIO_2[0] (JP3 pin 5), BCK on GPIO_2[3]
+# (pin 8), LRCK on GPIO_2[5] (pin 10) and DOUT on GPIO_2_IN[0] (pin 2).
+# Every other pin is high-Z. Names and locations are Terasic's - their
+# reference .qsf and the user manual's Table 3-8 - and the header pin
+# numbers are from the board schematic. GPIO_2_IN[2:0] are input-only.
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[0]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[1]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[2]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[3]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[4]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[5]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[6]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[7]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[8]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[9]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[10]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[11]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2[12]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2_IN[0]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2_IN[1]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_2_IN[2]
+set_location_assignment PIN_A14 -to GPIO_2[0]
+set_location_assignment PIN_B16 -to GPIO_2[1]
+set_location_assignment PIN_C14 -to GPIO_2[2]
+set_location_assignment PIN_C16 -to GPIO_2[3]
+set_location_assignment PIN_C15 -to GPIO_2[4]
+set_location_assignment PIN_D16 -to GPIO_2[5]
+set_location_assignment PIN_D15 -to GPIO_2[6]
+set_location_assignment PIN_D14 -to GPIO_2[7]
+set_location_assignment PIN_F15 -to GPIO_2[8]
+set_location_assignment PIN_F16 -to GPIO_2[9]
+set_location_assignment PIN_F14 -to GPIO_2[10]
+set_location_assignment PIN_G16 -to GPIO_2[11]
+set_location_assignment PIN_G15 -to GPIO_2[12]
+set_location_assignment PIN_E15 -to GPIO_2_IN[0]
+set_location_assignment PIN_E16 -to GPIO_2_IN[1]
+set_location_assignment PIN_M16 -to GPIO_2_IN[2]
+
+#============================================================
 # End of pin assignments by Terasic System Builder
 #============================================================
 
@@ -277,6 +333,8 @@ set_global_assignment -name VERILOG_FILE fx3StateMachine.v
 set_global_assignment -name VERILOG_FILE buffer.v
 set_global_assignment -name VERILOG_FILE bufferMonitor.v
 set_global_assignment -name VERILOG_FILE fifo.v
+set_global_assignment -name VERILOG_FILE adc128spiController.v
+set_global_assignment -name VERILOG_FILE pcm1802Slave.v
 set_global_assignment -name CDF_FILE DomesdayDuplicator_write_sof.cdf
 set_global_assignment -name VERILOG_FILE ../common/spiRegisters.v
 set_global_assignment -name VERILOG_FILE ../common/flashBridge.v

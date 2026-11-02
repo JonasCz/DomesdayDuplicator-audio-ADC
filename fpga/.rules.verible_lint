@@ -27,9 +27,10 @@
 # claim is prose that nothing checks.
 #
 # Top-level ports are the one exception the guide allows — CLOCK_50, GPIO0, GPIO1 and
-# LED are the DE0-Nano board's own pin names, bound by name to 164 lines of location
-# and I/O-standard assignment in DomesdayDuplicator.qsf. They are waived by those four
-# names, on that one file, in fpga/verible-waivers, which carries the full reason.
+# LED, and the application image's ADC_* and GPIO_2 audio ports, are the DE0-Nano
+# board's own pin names, bound by name to the location and I/O-standard assignments in
+# the .qsf files. They are waived by name, per top level, in fpga/verible-waivers,
+# which carries the full reason.
 +signal-name-style
 
 # Verible's default accepts UpperCamelCase or ALL_CAPS for a `parameter` but only

@@ -73,6 +73,72 @@ def sdc_port_group(sdc, name):
     return {normalise(p) for p in re.findall(r"GPIO\d\[\d+\]", body)}
 
 
+# The audio converters' pins. They are not on the two GPIO buses but on ports
+# of their own, under the board's names: the ADC128S022's four dedicated pins,
+# and the JP3 header as GPIO_2 and its input-only GPIO_2_IN.
+AUDIO_PIN = r"(?:ADC_[A-Z_]+|GPIO_2(?:_IN)?\[\d+\])"
+
+
+def normalise_audio(pin):
+    """GPIO_2[03] and GPIO_2[3] name the same pin; ADC_* has no index."""
+    match = re.match(r"(GPIO_2(?:_IN)?)\[(\d+)\]", pin)
+    return f"{match.group(1)}[{int(match.group(2))}]" if match else pin
+
+
+def read_audio_mapping(top):
+    """The audio pins the top level drives, and the ones it reads."""
+    driven = {
+        normalise_audio(pin)
+        for pin, value in re.findall(rf"assign ({AUDIO_PIN})\s*=\s*([^;]+);", top)
+        if "1'bZ" not in value
+    }
+    read = {
+        normalise_audio(pin) for pin in re.findall(rf"assign \w+\s*=\s*({AUDIO_PIN});", top)
+    }
+    return driven, read
+
+
+def sdc_audio_group(sdc, name):
+    """The ports in an audio port group, or an empty set if there is none."""
+    match = re.search(rf"set {name} \[get_ports \{{(.*?)\}}\]", sdc, re.S)
+    if not match:
+        return set()
+    body = match.group(1).replace("\\\n", " ")
+    return {normalise_audio(p) for p in re.findall(AUDIO_PIN, body)}
+
+
+def check_audio(top, sdc):
+    """Every audio pin the top level maps is in a group the SDC false-paths.
+
+    Role matters here as it does for the FX3: an output in the input group
+    would be false-pathed in the wrong direction and left unmentioned in the
+    right one. A design with no audio pins and no groups passes trivially.
+    """
+    driven, read = read_audio_mapping(top)
+    groups = {
+        "audio outputs": (driven, sdc_audio_group(sdc, "audio_outputs"), "-to $audio_outputs"),
+        "audio inputs": (read, sdc_audio_group(sdc, "audio_inputs"), "-from $audio_inputs"),
+    }
+
+    failed = False
+    for label, (want, got, false_path) in groups.items():
+        missing, extra = want - got, got - want
+        if missing or extra:
+            failed = True
+            print(f"  FAIL  {label}: {len(got)} of {len(want)} ports")
+            if missing:
+                print(f"          missing from the SDC: {sorted(missing)}")
+            if extra:
+                print(f"          not mapped by the top level: {sorted(extra)}")
+        elif want and f"set_false_path {false_path}" not in sdc:
+            failed = True
+            print(f"  FAIL  {label}: grouped, but the group is never constrained")
+        else:
+            print(f"  OK    {label}: {len(got)} of {len(want)} ports")
+
+    return failed
+
+
 def sdc_false_paths(sdc):
     found = re.findall(
         r"set_false_path -(?:from|to) \[get_ports \{(GPIO\d\[\d+\]|LED\[\*\])\}\]", sdc
@@ -200,6 +266,9 @@ def main():
         failed = True
     else:
         print(f"  OK    every one of the {len(mapped)} mapped FX3 and ADC pins is accounted for")
+
+    if check_audio(top, sdc):
+        failed = True
 
     return 1 if failed else 0
 

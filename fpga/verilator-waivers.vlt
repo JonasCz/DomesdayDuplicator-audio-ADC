@@ -194,6 +194,15 @@ lint_off -rule UNUSEDSIGNAL -file "*/DomesdayDuplicatorFactory.v" -match "*test_
 // because the pin assignments are fixed by the PCB.
 lint_off -rule UNUSEDSIGNAL -file "*/DomesdayDuplicator.v" -match "*fx3_control*"
 
+// DomesdayDuplicator.v: bits 2 and 1 of GPIO_2_IN are unused.
+//
+// GPIO_2_IN is the three input-only pins of the DE0-Nano's JP3 header, declared
+// whole under the board's own name like every other port of the top level. Bit 0
+// is the PCM1802's DOUT; bits 1 and 2, JP3 pins 3 and 4, have nothing wired to
+// them. Matched on the reported bit range, so a design that stopped reading bit 0
+// as well would still be reported.
+lint_off -rule UNUSEDSIGNAL -file "*/DomesdayDuplicator.v" -match "*Bits of signal are not used: 'GPIO_2_IN'?2:1?"
+
 // remoteUpdate.v: the top five bits of the block's read data are unused.
 //
 // data_out is 29 bits because that is the widest thing the block returns - the

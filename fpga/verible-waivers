@@ -23,8 +23,8 @@
 # The DE0-Nano board's own port names
 # ---------------------------------------------------------------------------
 #
-# CLOCK_50, GPIO0, GPIO1 and LED are the only signals in the design that are not
-# free to be renamed. DomesdayDuplicator.qsf binds them by name across 164 lines of
+# CLOCK_50, GPIO0, GPIO1 and LED are signals in the design that are not free to be
+# renamed. DomesdayDuplicator.qsf binds them by name across 164 lines of
 # pin-location and I/O-standard assignment, and the .SDC creates the 50 MHz clock
 # with `[get_ports CLOCK_50]`. Renaming them means editing every one of those lines
 # in step, and a single typo yields a board that programs successfully and drives the
@@ -38,6 +38,13 @@
 # including a new port on this same module — is still reported.
 waive --rule=signal-name-style --regex="\b(CLOCK_50|GPIO0|GPIO1|LED)\b" --location=".*DomesdayDuplicator\.v"
 waive --rule=signal-name-style --regex="\b(CLOCK_50|GPIO0|GPIO1|LED)\b" --location=".*DomesdayDuplicatorFactory\.v"
+
+# The audio converters' ports, which are the same case. ADC_CS_N, ADC_SADDR, ADC_SCLK
+# and ADC_SDAT are the DE0-Nano's on-board ADC128S022, and GPIO_2 and GPIO_2_IN its
+# 2x13 header JP3, named exactly as Terasic's manual and reference .qsf name them and
+# bound by those names in DomesdayDuplicator.qsf for the same reasons as the four above.
+# Only the application image has them, so only its top level is waived.
+waive --rule=signal-name-style --regex="\b(ADC_CS_N|ADC_SADDR|ADC_SCLK|ADC_SDAT|GPIO_2|GPIO_2_IN)\b" --location=".*DomesdayDuplicator\.v"
 
 # ---------------------------------------------------------------------------
 # The megafunction's own parameter names

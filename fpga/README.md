@@ -3,6 +3,11 @@
 Verilog for the Terasic DE0-NANO board (Altera/Intel Cyclone IV, `EP4CE22F17C6`). It samples
 the ADC, buffers the data and feeds it to the FX3 USB 3.0 controller over the GPIF II bus.
 
+The application image also reads two audio converters — the DE0-Nano's own ADC128S022 and a
+PCM1802 on header JP3 — and carries their samples in the top six bits of the sample stream, in
+the framed sample format that
+[application/framed-sample-format.md](application/framed-sample-format.md) specifies.
+
 ## Two images, and why
 
 The gateware is **two** bitstreams that live in one flash, and which one a unit is running
@@ -51,13 +56,16 @@ Inside `application/`:
 
 | File | Role |
 | --- | --- |
-| `DomesdayDuplicator.v` | Top level: pin mapping and module wiring |
+| `DomesdayDuplicator.v` | Top level: pin mapping and module wiring. Builds `dataGenerator.v` in the framed sample format |
 | `DomesdayDuplicator.qsf` | Quartus settings — device, pin assignments, source list |
 | `DomesdayDuplicator.qpf` | Quartus project file |
-| `DomesdayDuplicator.SDC` | Timing constraints. Checked by `tests/run-sdc.sh`; the I/O delay values in its header are pessimistic placeholders pending the datasheets |
+| `DomesdayDuplicator.SDC` | Timing constraints. Checked by `tests/run-sdc.sh`; the I/O delay values in its header are pessimistic placeholders pending the datasheets. The audio converters' pins are false paths, with the margins that make that safe argued beside them |
 | `DomesdayDuplicator.cof` | Conversion to the raw image bytes a device update writes. Its `rpd_little_endian` setting decides the bit orientation of those bytes and is load-bearing — read the comment beside it before changing anything here |
-| `halfBandDecimator.v` | The 10 MHz anti-alias filter and 2:1 decimation, for tape capture at 20 Msps. In front of `dataGenerator.v`, so the sequence counter and the test ramp are attached to the samples that survive. The design, the measured response and the phase are on [The decimation filter](../docs/content/development/fpga-decimation-filter.md) |
-| `dataGenerator.v` | ADC sampling and the built-in test-data generator |
+| `halfBandDecimator.v` | The 10 MHz anti-alias filter and 2:1 decimation, for tape capture at 20 Msps. In front of `dataGenerator.v`, so the sequence counter, the frame and the test ramp are attached to the samples that survive, and the audio is ticked at the rate they leave. The design, the measured response and the phase are on [The decimation filter](../docs/content/development/fpga-decimation-filter.md) |
+| `dataGenerator.v` | ADC sampling and the built-in test-data generator, and what bits 15:10 carry: the six-bit sequence number by default, or with `FramedFormat` set the framed sample format — sync pattern, audio and a 48-bit counter in 512-sample frames |
+| [`framed-sample-format.md`](application/framed-sample-format.md) | **The specification of the framed sample format**, and the one place it is defined: the frame layout slot by slot, the audio rates and timing, the converters' wiring and straps, and how it differs from the fork it comes from |
+| `adc128spiController.v` | The DE0-Nano's on-board ADC128S022, read as left and right audio once per frame. Timed from the frame slot, on the system clock |
+| `pcm1802Slave.v` | A PCM1802 on header JP3, in slave mode with the FPGA supplying its clocks, read as 24-bit stereo once per frame. Timed from the frame slot, on the system clock |
 | `buffer.v` | Sample buffering between the sampling side and the FX3 |
 | `fifo.v` | The single-clock FIFO `buffer.v` is built from |
 | `bufferMonitor.v` | What the buffer did, reported at registers `0x40`–`0x56`. An observer: every port but the sampling pulse is an output, and that pulse reaches nothing outside this module |
@@ -146,7 +154,7 @@ beside the sources are its only configuration:
 | --- | --- |
 | [.verible-format](.verible-format) | Formatter settings. Four-space indent, 100 columns, every alignment mode set explicitly rather than left at Verible's `infer` |
 | [.rules.verible_lint](.rules.verible_lint) | Style rules — Verible's defaults, plus `signal-name-style` and `explicit-begin`, minus the SystemVerilog-only rules. Every departure carries its reason |
-| [verible-waivers](verible-waivers) | Narrow per-case exceptions. One entry: the four DE0-Nano port names |
+| [verible-waivers](verible-waivers) | Narrow per-case exceptions: the DE0-Nano port names, and the megafunction model's parameter names |
 
 `verible-verilog-ls` is a language server that finds `.rules.verible_lint` by searching
 upward, so any editor with an LSP client shows the same diagnostics the CI check enforces,

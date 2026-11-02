@@ -188,6 +188,42 @@ set_multicycle_path -hold 1 -from [get_clocks adc_clock] -to [get_clocks $pll_cl
 
 
 # ---------------------------------------------------------------------------
+# The audio converters
+# ---------------------------------------------------------------------------
+#
+# The ADC128S022 on the DE0-Nano's own pins, and the PCM1802 on JP3. Both are
+# driven entirely by system-clock registers that the capture enable steps at
+# fixed slots of the sample frame (adc128spiController.v, pcm1802Slave.v), so
+# neither has a clock of its own for an I/O delay to be referred to: SCLK,
+# SCKI, BCK and LRCK are outputs this design sets, not clocks anything in it
+# runs on.
+#
+# What times them is the protocol. Each output changes at least two capture
+# slots - 25 ns each at 40 Msps, 50 ns decimating - from any edge the
+# converter samples it against, and usually four or eight. Each input is read
+# at least 40 ns (PCM1802) or 125 ns (ADC128S022) after the converter has
+# finished changing it and at least 90 ns before it can change again. Routing
+# to and from a pin on this device is a few nanoseconds either way, which
+# those margins cover many times over; the arithmetic is in each module's
+# header and the datasheet figures it uses are cited there.
+#
+# So they are false paths, as the SPI register link below is. Analysing them
+# against the 80 MHz clock would demand a single-cycle relationship the design
+# never relies on, and would report failures on paths that have hundreds of
+# nanoseconds to spare.
+set audio_outputs [get_ports { \
+    ADC_CS_N ADC_SADDR ADC_SCLK \
+    GPIO_2[0] GPIO_2[3] GPIO_2[5] }]
+
+set audio_inputs [get_ports { \
+    ADC_SDAT \
+    GPIO_2_IN[0] }]
+
+set_false_path -to $audio_outputs
+set_false_path -from $audio_inputs
+
+
+# ---------------------------------------------------------------------------
 # Paths that are not timed, and why
 # ---------------------------------------------------------------------------
 

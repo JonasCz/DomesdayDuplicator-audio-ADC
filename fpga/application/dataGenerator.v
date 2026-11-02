@@ -5,6 +5,7 @@
     Data generation module
     Domesday Duplicator - LaserDisc RF sampler
     SPDX-FileCopyrightText: 2018-2026 Simon Inns
+    SPDX-FileCopyrightText: 2025-2026 Jonas Czech
     SPDX-License-Identifier: GPL-3.0-or-later
 
     Runs on the system clock and takes one sample per assertion of
@@ -15,20 +16,48 @@
     it has the same time to settle as before.
 
     Everything downstream of the enable counts samples rather than cycles, so
-    the ramp and the sequence number advance at the sampling rate and not at
-    the system clock rate.
+    the ramp, the sequence number and the frame advance at the sampling rate
+    and not at the system clock rate.
+
+    Bits 9:0 of every word are the RF sample, or the test ramp in test mode,
+    in either format. What bits 15:10 carry is chosen by FramedFormat:
+
+      0  the six-bit sequence number, 0 to 62, 65535 samples each. This is
+         the default, and the format the host's sequence validator reads.
+
+      1  the framed format: 512-sample frames whose top six bits carry a
+         192-bit sync pattern, the two audio converters' latest samples and a
+         free-running 48-bit counter. The layout is specified, slot by slot,
+         in framed-sample-format.md beside this file, which is the one place
+         it is defined; the frame position, the header and the counter below
+         implement that page and nothing else.
+
+    Both formats are always built and the parameter picks one at the output,
+    so that a lint of this module checks the logic of both. Synthesis keeps
+    only the one that is selected.
 
 ************************************************************************/
 
-module dataGenerator (
+module dataGenerator #(
+    // 0 = sequence number in bits 15:10, 1 = the framed format
+    parameter [0:0] FramedFormat = 1'b0
+) (
     input       reset_n,
     input       clock,
     input       sample_enable,
     input [9:0] adc_databus,
     input       test_mode_flag,
 
+    // The audio converters' latest samples, carried by the framed format's
+    // header. The default format does not read them.
+    input [11:0] adc128_left,   // ADC128S022 IN0, unsigned
+    input [11:0] adc128_right,  // ADC128S022 IN1, unsigned
+    input [23:0] pcm1802_left,  // PCM1802 left, two's complement
+    input [23:0] pcm1802_right, // PCM1802 right, two's complement
+
     // Outputs
-    output [15:0] data_out
+    output [15:0] data_out,
+    output [ 8:0] frame_position  // Framed format: the frame slot of data_out
 );
 
     // Register to store ADC data values
@@ -68,11 +97,14 @@ module dataGenerator (
 
     // Register to store the sequence number and the position within the block
     // of samples that number covers
-    reg [ 5:0] sequence_count;
-    reg [15:0] sequence_position;
+    reg  [ 5:0] sequence_count;
+    reg  [15:0] sequence_position;
 
-    // The top 6 bits of the output are the sequence number
-    assign data_out[15:10] = sequence_count;
+    // The top 6 bits of the output are the sequence number or the frame's
+    // metadata, whichever format this instance was built for
+    wire [ 5:0] frame_metadata;
+
+    assign data_out[15:10] = FramedFormat ? frame_metadata : sequence_count;
 
     // If we are in test-mode use test data,
     // otherwise use the actual ADC data
@@ -116,6 +148,117 @@ module dataGenerator (
                 end
             end else begin
                 sequence_position <= sequence_position + BlockOne;
+            end
+        end
+    end
+
+    // The framed format --------------------------------------------------------
+    //
+    // A frame is 512 samples. Slots 0 to 31 carry the sync pattern, 32 to 47
+    // the header, and 48 to 511 the counter, eight slots to a value. Six bits
+    // per slot: least significant chunk first in the sync pattern and the
+    // counter, most significant first in the header. That is the layout of the
+    // fork this format comes from, kept bit for bit because captures and
+    // decoders exist that read it.
+
+    // The sync pattern. Slot k carries bits 6k+5 to 6k, so the low 48 bits
+    // are the first eight slots.
+    localparam [191:0] SyncPattern = 192'hDDDF20251015DDDF20251015DDDF20251016FEDCBA987654;
+
+    localparam [8:0] HeaderFirst = 9'd32;
+    localparam [8:0] CounterFirst = 9'd48;
+
+    // A word the header reserves, at slots 36, 37, 46 and 47, six bits each
+    // and most significant first. Nothing is assigned to carry there yet, so
+    // it is zero; giving it a meaning is a new input, snapshotted beside the
+    // audio below, in place of this constant.
+    wire [23:0] reserved_word = 24'd0;
+
+    // The frame slot of the sample on data_out, and the slot whose metadata
+    // is loaded with the next sample.
+    reg  [ 8:0] position;
+    wire [ 8:0] next_position = position + 9'd1;
+
+    // The metadata on data_out. A register, so that bits 15:10 leave this
+    // module from a flop in both formats rather than from a decoder in one.
+    reg  [ 5:0] metadata;
+
+    // The counter. It advances after the eighth slot of each value - the last
+    // slot of the frame included, so each frame continues the count where the
+    // one before it stopped - and nothing but reset_n ever clears it.
+    reg  [47:0] counter;
+
+    // The audio, snapshotted once per frame so that every frame carries one
+    // coherent pair from each converter. The fork latched each converter
+    // whenever it produced a sample, so a value spread across four slots could
+    // change between the first of them and the last.
+    reg  [11:0] adc128_left_frame;
+    reg  [11:0] adc128_right_frame;
+    reg  [23:0] pcm1802_left_frame;
+    reg  [23:0] pcm1802_right_frame;
+
+    // Each region's metadata for the slot being loaded. The sync pattern and
+    // the counter are indexed by slot; the header is a table.
+    wire [ 7:0] sync_offset = {3'b000, next_position[4:0]} * 8'd6;
+    wire [ 5:0] counter_offset = {3'b000, next_position[2:0]} * 6'd6;
+    wire [ 5:0] sync_chunk = SyncPattern[sync_offset+:6];
+    wire [ 5:0] counter_chunk = counter[counter_offset+:6];
+    reg  [ 5:0] header_chunk;
+
+    always @(*) begin
+        case (next_position[3:0])
+            4'd0:    header_chunk = adc128_left_frame[11:6];
+            4'd1:    header_chunk = adc128_left_frame[5:0];
+            4'd2:    header_chunk = adc128_right_frame[11:6];
+            4'd3:    header_chunk = adc128_right_frame[5:0];
+            4'd4:    header_chunk = reserved_word[23:18];
+            4'd5:    header_chunk = reserved_word[17:12];
+            4'd6:    header_chunk = pcm1802_left_frame[23:18];
+            4'd7:    header_chunk = pcm1802_left_frame[17:12];
+            4'd8:    header_chunk = pcm1802_left_frame[11:6];
+            4'd9:    header_chunk = pcm1802_left_frame[5:0];
+            4'd10:   header_chunk = pcm1802_right_frame[23:18];
+            4'd11:   header_chunk = pcm1802_right_frame[17:12];
+            4'd12:   header_chunk = pcm1802_right_frame[11:6];
+            4'd13:   header_chunk = pcm1802_right_frame[5:0];
+            4'd14:   header_chunk = reserved_word[11:6];
+            default: header_chunk = reserved_word[5:0];
+        endcase
+    end
+
+    wire [5:0] next_metadata = (next_position < HeaderFirst) ? sync_chunk :
+        (next_position < CounterFirst) ? header_chunk : counter_chunk;
+
+    assign frame_metadata = metadata;
+    assign frame_position = position;
+
+    // Reset leaves slot 0 on the output, so the first word after reset starts
+    // a frame and the first counter value is zero.
+    always @(posedge clock, negedge reset_n) begin
+        if (!reset_n) begin
+            position            <= 9'd0;
+            metadata            <= SyncPattern[5:0];
+            counter             <= 48'd0;
+            adc128_left_frame   <= 12'd0;
+            adc128_right_frame  <= 12'd0;
+            pcm1802_left_frame  <= 24'd0;
+            pcm1802_right_frame <= 24'd0;
+        end else if (sample_enable) begin
+            position <= next_position;
+            metadata <= next_metadata;
+
+            if ((next_position >= CounterFirst) && (next_position[2:0] == 3'd7)) begin
+                counter <= counter + 48'd1;
+            end
+
+            // With the sample that loads slot 0: after both converters have
+            // published the pair they finish in a frame, and long before the
+            // header slots that carry it are reached.
+            if (next_position == 9'd0) begin
+                adc128_left_frame   <= adc128_left;
+                adc128_right_frame  <= adc128_right;
+                pcm1802_left_frame  <= pcm1802_left;
+                pcm1802_right_frame <= pcm1802_right;
             end
         end
     end

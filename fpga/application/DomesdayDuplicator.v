@@ -15,7 +15,17 @@ module DomesdayDuplicator (
     input         CLOCK_50,
     inout  [33:0] GPIO0,
     inout  [33:0] GPIO1,
-    output [ 7:0] LED
+    output [ 7:0] LED,
+
+    // The DE0-Nano's ADC128S022, on its own dedicated pins
+    output ADC_CS_N,
+    output ADC_SADDR,
+    output ADC_SCLK,
+    input  ADC_SDAT,
+
+    // The 2x13 header JP3, which carries the PCM1802
+    inout [12:0] GPIO_2,
+    input [ 2:0] GPIO_2_IN
 );
 
     // FX3 Hardware mapping begins ------------------------------------------------
@@ -217,6 +227,49 @@ module DomesdayDuplicator (
     // ADC Hardware mapping ends --------------------------------------------------
 
 
+    // Audio hardware mapping begins ----------------------------------------------
+
+    // ADC128S022, the DE0-Nano's own converter. Its analogue inputs IN0 and
+    // IN1 - left and right - are JP3 pins 24 and 25. ADC_SADDR is the
+    // converter's DIN and ADC_SDAT its DOUT; the names are Terasic's.
+    wire adc128_chip_select_n;
+    wire adc128_serial_clock;
+    wire adc128_din;
+    wire adc128_dout;
+
+    assign ADC_CS_N    = adc128_chip_select_n;  // PIN_A10
+    assign ADC_SCLK    = adc128_serial_clock;  // PIN_B14
+    assign ADC_SADDR   = adc128_din;  // PIN_B10
+    assign adc128_dout = ADC_SDAT;  // PIN_A9
+
+    // PCM1802 on JP3, wired as the fork wired it. The converter's FSYNC is
+    // not on any pin here and must be tied high at the converter.
+    wire pcm1802_scki;
+    wire pcm1802_bck;
+    wire pcm1802_lrck;
+    wire pcm1802_dout;
+
+    assign GPIO_2[0]    = pcm1802_scki;  // JP3 pin 5,  PIN_A14 - SCKI
+    assign GPIO_2[3]    = pcm1802_bck;  // JP3 pin 8,  PIN_C16 - BCK
+    assign GPIO_2[5]    = pcm1802_lrck;  // JP3 pin 10, PIN_D16 - LRCK
+    assign pcm1802_dout = GPIO_2_IN[0];  // JP3 pin 2,  PIN_E15 - DOUT
+
+    // High-Z the unused JP3 pins. GPIO_2_IN[2:1], JP3 pins 3 and 4, are
+    // input-only and are not read.
+    assign GPIO_2[1]    = 1'bZ;
+    assign GPIO_2[2]    = 1'bZ;
+    assign GPIO_2[4]    = 1'bZ;
+    assign GPIO_2[6]    = 1'bZ;
+    assign GPIO_2[7]    = 1'bZ;
+    assign GPIO_2[8]    = 1'bZ;
+    assign GPIO_2[9]    = 1'bZ;
+    assign GPIO_2[10]   = 1'bZ;
+    assign GPIO_2[11]   = 1'bZ;
+    assign GPIO_2[12]   = 1'bZ;
+
+    // Audio hardware mapping ends ------------------------------------------------
+
+
     // Application logic begins ---------------------------------------------------
 
 
@@ -334,17 +387,79 @@ module DomesdayDuplicator (
         .output_enable(capture_enable)   // 1 = a sample worth keeping
     );
 
+    // The audio converters' latest samples, and the frame slot they are
+    // timed from
+    wire [ 8:0] frame_position;
+    wire [11:0] adc128_left;
+    wire [11:0] adc128_right;
+    wire [23:0] pcm1802_left;
+    wire [23:0] pcm1802_right;
+
     // Generate 16-bit data either from the ADC or the test data generator
-    dataGenerator data_generator_0 (
+    //
+    // In the framed sample format: bits 9:0 are the sample exactly as before,
+    // and bits 15:10 carry 512-sample frames of sync pattern, audio and a
+    // 48-bit counter in place of the six-bit sequence number. The counter,
+    // like the sequence number it replaces, is attached to the samples that
+    // survive the decimator, so a decimated capture is an unbroken run of
+    // frames. fpga/application/framed-sample-format.md is the specification.
+    dataGenerator #(
+        .FramedFormat(1'b1)
+    ) data_generator_0 (
         // Inputs
         .reset_n       (reset_n),         // Not reset
         .clock         (system_clock),    // 80 MHz system clock
         .sample_enable (capture_enable),  // 1 = take a sample on this edge
         .adc_databus   (capture_sample),  // 10-bit sample from the decimator
         .test_mode_flag(fx3_test_mode),   // 1 = Test mode on
+        .adc128_left   (adc128_left),     // ADC128S022 IN0
+        .adc128_right  (adc128_right),    // ADC128S022 IN1
+        .pcm1802_left  (pcm1802_left),    // PCM1802 left
+        .pcm1802_right (pcm1802_right),   // PCM1802 right
 
         // Outputs
-        .data_out(data_generator_out)  // 16-bit data out
+        .data_out      (data_generator_out),  // 16-bit data out
+        .frame_position(frame_position)       // Frame slot of data_out
+    );
+
+    // Audio capture
+    //
+    // Both converters are timed from the frame slot rather than from counters
+    // of their own, and ticked by the capture enable rather than the ADC's, so
+    // one stereo sample from each lands in every frame at whichever rate is
+    // selected: 78.125 kHz at 40 Msps and 39.0625 kHz decimating. Neither is
+    // clocked by anything but the system clock; the converters' clocks are
+    // register outputs.
+    adc128spiController adc128_controller_0 (
+        // Inputs
+        .reset_n       (reset_n),         // Not reset
+        .clock         (system_clock),    // 80 MHz system clock
+        .sample_enable (capture_enable),  // 1 = a sample is taken on this edge
+        .frame_position(frame_position),  // Frame slot of that sample
+        .adc_dout      (adc128_dout),     // ADC_SDAT
+
+        // Outputs
+        .adc_chip_select_n(adc128_chip_select_n),  // ADC_CS_N
+        .adc_serial_clock (adc128_serial_clock),   // ADC_SCLK
+        .adc_din          (adc128_din),            // ADC_SADDR
+        .audio_left       (adc128_left),           // IN0
+        .audio_right      (adc128_right)           // IN1
+    );
+
+    pcm1802Slave pcm1802_slave_0 (
+        // Inputs
+        .reset_n       (reset_n),         // Not reset
+        .clock         (system_clock),    // 80 MHz system clock
+        .sample_enable (capture_enable),  // 1 = a sample is taken on this edge
+        .frame_position(frame_position),  // Frame slot of that sample
+        .pcm_dout      (pcm1802_dout),    // DOUT
+
+        // Outputs
+        .pcm_scki   (pcm1802_scki),  // SCKI, 256 fs
+        .pcm_bck    (pcm1802_bck),   // BCK, 64 fs
+        .pcm_lrck   (pcm1802_lrck),  // LRCK, fs
+        .audio_left (pcm1802_left),  // VINL
+        .audio_right(pcm1802_right)  // VINR
     );
 
     // The capture buffer's back-pressure instrument, on its way to the register
